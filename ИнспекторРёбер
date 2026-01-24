@@ -1,0 +1,108 @@
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+from PySide import QtCore, QtGui, QtWidgets
+
+class CleanInspector(QtWidgets.QWidget):
+    def __init__(self):
+        super(CleanInspector, self).__init__()
+        self.initUI()
+        self.timer = QtCore.QTimer()
+        self.timer.timeout.connect(self.update_info)
+        self.timer.start(300)
+        self.current_selection_state = ""
+
+    def initUI(self):
+        self.setWindowTitle('Edge/Face Direction 1.2.0')
+        self.setWindowFlags(QtCore.Qt.WindowStaysOnTopHint)
+        self.resize(300, 100)
+        layout = QtWidgets.QVBoxLayout()
+        self.label_info = QtWidgets.QLabel("Выделите ребро или грань...")
+        self.label_info.setStyleSheet("font-weight: bold; color: #2c3e50;")
+        self.label_info.setWordWrap(True)
+        layout.addWidget(self.label_info)
+        self.setLayout(layout)
+        self.show()
+
+    def update_info(self):
+        selection_ex = Gui.Selection.getSelectionEx()
+        if not selection_ex:
+            return
+
+        # Проверка изменения выделения
+        selection_key = str([(s.Object.Name, s.SubElementNames) for s in selection_ex])
+        if selection_key == self.current_selection_state:
+            return
+        
+        self.current_selection_state = selection_key
+        doc = App.activeDocument()
+        
+        # 1. Удаляем все временные маркеры
+        for o in doc.Objects:
+            if "EdgeMarker" in o.Name:
+                doc.removeObject(o.Name)
+
+        cone_height = 1.5
+        found_elements = []
+
+        for sel in selection_ex:
+            obj = sel.Object
+            for sub in sel.SubElementNames:
+                edges_to_draw = []
+                
+                if "Face" in sub:
+                    face = obj.Shape.getElement(sub)
+                    found_elements.append(f"Грань {sub}")
+                    for i, edge in enumerate(face.Edges):
+                        edges_to_draw.append((edge, f"{sub}_e{i}"))
+                elif "Edge" in sub:
+                    edge = obj.Shape.getElement(sub)
+                    found_elements.append(f"Ребро {sub}")
+                    edges_to_draw.append((edge, sub))
+
+                # Отрисовка стрелок
+                for edge, name in edges_to_draw:
+                    p0 = edge.valueAt(edge.FirstParameter)
+                    p1 = edge.valueAt(edge.LastParameter)
+                    t0 = edge.tangentAt(edge.FirstParameter)
+                    t1 = edge.tangentAt(edge.LastParameter)
+                    
+                    # Зеленый конус (Старт 0.0)
+                    self.add_cone(p0, t0, (0.0, 0.8, 0.0), f"S_{obj.Name}_{name}")
+                    
+                    # Красный конус (Конец 1.0, острие в точке)
+                    offset_p1 = p1.sub(t1.multiply(cone_height))
+                    self.add_cone(offset_p1, t1, (0.8, 0.0, 0.0), f"E_{obj.Name}_{name}")
+
+        if found_elements:
+            self.label_info.setText(", ".join(found_elements))
+        doc.recompute()
+
+    def add_cone(self, pos, direction, color, name_suffix):
+        doc = App.activeDocument()
+        cone = doc.addObject("Part::Cone", f"EdgeMarker_{name_suffix}")
+        cone.Radius1 = 0.45
+        cone.Radius2 = 0.0
+        cone.Height = 1.5
+        cone.Placement = App.Placement(pos, App.Rotation(App.Vector(0,0,1), direction))
+        cone.ViewObject.ShapeColor = color
+        cone.ViewObject.LineColor = color
+        # Сделаем их чуть прозрачными, чтобы не перекрывали саму геометрию
+        cone.ViewObject.Transparency = 20
+
+    def closeEvent(self, event):
+        self.timer.stop()
+        doc = App.activeDocument()
+        if doc:
+            for o in doc.Objects:
+                if "EdgeMarker" in o.Name:
+                    doc.removeObject(o.Name)
+            doc.recompute()
+        event.accept()
+
+if __name__ == "__main__":
+    # Поиск и закрытие старого окна
+    for widget in QtWidgets.QApplication.allWidgets():
+        if widget.windowTitle() == 'Edge/Face Direction 1.2.0':
+            widget.close()
+    inspector = CleanInspector()
