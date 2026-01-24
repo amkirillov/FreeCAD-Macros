@@ -1,0 +1,227 @@
+import FreeCAD as App
+import FreeCADGui as Gui
+import random
+from PySide import QtCore, QtGui
+
+class PapercraftTool(QtGui.QWidget):
+    def __init__(self):
+        super(PapercraftTool, self).__init__()
+        # 1. Считываем настройки пользователя
+        vp = App.ParamGet("User parameter:BaseApp/Preferences/View")
+        def to_rgb(val):
+            return ((val >> 24 & 0xFF)/255.0, (val >> 16 & 0xFF)/255.0, (val >> 8 & 0xFF)/255.0)
+
+        self.default_shape = to_rgb(vp.GetUnsigned("DefaultShapeColor", 2914303487))
+        self.default_line = to_rgb(vp.GetUnsigned("DefaultShapeLineColor", 1644825))
+        self.default_point = to_rgb(vp.GetUnsigned("DefaultShapeVertexColor", 1644825))
+        self.default_line_width = vp.GetInt("DefaultShapeLineWidth", 2)
+        self.default_point_size = vp.GetInt("DefaultShapePointSize", 3)
+
+        self.palettes = {
+            "Красный": (0.0, 0.8), "Оранжевый": (0.08, 0.8),
+            "Желтый": (0.15, 0.8), "Зеленый": (0.33, 0.8),
+            "Голубой": (0.55, 0.8), "Синий": (0.66, 0.8),
+            "Фиолетовый": (0.75, 0.8), "Серый": (0.0, 0.0)
+        }
+        
+        self.transp_buttons = {} 
+        self.initUI()
+        self.observer = SelectionObserver(self)
+        Gui.Selection.addObserver(self.observer)
+        self.update_target_label()
+
+# Фактор затенения цвета рёбер и вершин относительно цвета граней
+# 0 - чёрные вершины и рёбра, 1 - соответствуют цвету граней
+        self.kFactor = 0.6 # 0.6 - на 40% темнее
+
+    def initUI(self):
+        self.setWindowTitle('Стиль 2026')
+        self.setWindowFlags(QtCore.Qt.WindowStaysOnTopHint)
+        self.setFixedSize(460, 450) # Немного увеличил высоту для свободного расположения
+        
+        layout = QtGui.QVBoxLayout()
+
+        self.targetLabel = QtGui.QLabel("Цель: [Ничего не выбрано]")
+        self.targetLabel.setStyleSheet("font-weight: bold; color: #444; border-bottom: 1px solid #ccc; padding-bottom: 5px;")
+        layout.addWidget(self.targetLabel)
+
+        # 1. Сетка палитры цветов
+        grid = QtGui.QGridLayout()
+        for i, (name, hsv) in enumerate(self.palettes.items()):
+            btn = QtGui.QPushButton()
+            btn.setFixedSize(90, 35) # Чуть шире кнопки под окно 460
+            qc = QtGui.QColor.fromHsvF(hsv[0], hsv[1], 0.8)
+            btn.setStyleSheet(f"background-color: {qc.name()}; border: 1px solid #555; border-radius: 3px;")
+            btn.clicked.connect(lambda chk=False, n=name: self.apply_hue(n))
+            grid.addWidget(btn, i // 4, i % 4)
+        layout.addLayout(grid)
+
+        # 2. Служебные кнопки
+        btns = QtGui.QHBoxLayout()
+        self.btnSync = QtGui.QPushButton("Синхронизировать цвет\nрёбер и вершин с гранями")
+        self.btnSync.setFixedHeight(45)
+        self.btnSync.clicked.connect(self.sync_colors)
+        btns.addWidget(self.btnSync)
+        
+        self.btnRand = QtGui.QPushButton("Случайный\nцвет")
+        self.btnRand.setFixedHeight(45)
+        self.btnRand.clicked.connect(lambda: self.apply_hue(None))
+        btns.addWidget(self.btnRand)
+        layout.addLayout(btns)
+
+        layout.addSpacing(10)
+
+        # 3. Кнопки прозрачности
+        layout.addWidget(QtGui.QLabel("Прозрачность (%):"))
+        transp_layout = QtGui.QHBoxLayout()
+        transp_layout.setSpacing(8)
+        transp_layout.addStretch()
+        
+        percents = [0, 15, 50, 75]
+        for p in percents:
+            btn = QtGui.QPushButton(str(p))
+            btn.setFixedSize(40, 35) # Кнопки стали крупнее и удобнее
+            btn.setCheckable(True)
+            btn.p_val = p
+            btn.clicked.connect(lambda chk=False, val=p: self.change_transp(val))
+            transp_layout.addWidget(btn)
+            self.transp_buttons[p] = btn
+            
+        transp_layout.addStretch()
+        layout.addLayout(transp_layout)
+        layout.addSpacing(15)
+
+        # 4. Сброс и Закрыть
+        self.btnReset = QtGui.QPushButton("СБРОС СТИЛЯ")
+        self.btnReset.setFixedHeight(40)
+        self.btnReset.setStyleSheet("background-color: #fff0f0; color: #d32f2f; font-weight: bold; border: 1px solid #d32f2f;")
+        self.btnReset.clicked.connect(self.reset_style)
+        layout.addWidget(self.btnReset)
+
+        self.btnClose = QtGui.QPushButton("ЗАКРЫТЬ")
+        self.btnClose.setFixedHeight(35)
+        self.btnClose.clicked.connect(self.close)
+        layout.addWidget(self.btnClose)
+
+        self.setLayout(layout)
+
+    def get_real_parent(self, obj):
+        if not obj: return None
+        if obj.isDerivedFrom("PartDesign::Body") or obj.isDerivedFrom("App::Part"): return obj
+        for p in obj.InList:
+            if p.isDerivedFrom("PartDesign::Body") or p.isDerivedFrom("App::Part"): return p
+        return obj
+
+    def get_targets(self):
+        sel = Gui.Selection.getSelectionEx()
+        if sel: return list(set([self.get_real_parent(s.Object) for s in sel]))
+        active = App.ActiveDocument.ActiveObject
+        return [self.get_real_parent(active)] if active else []
+
+    def update_target_label(self, force_empty=False):
+        sel = Gui.Selection.getSelectionEx()
+        if force_empty or not sel:
+            self.targetLabel.setText("Цель: [Ничего не выбрано]")
+            self.update_transp_ui(None)
+            return
+        
+        s = sel[0]
+        parent = self.get_real_parent(s.Object)
+        sub = ", ".join(s.SubElementNames)
+        self.targetLabel.setText(f"Цель: {sub} ({parent.Label})" if sub else f"Цель: {parent.Label}")
+        self.update_transp_ui(parent)
+
+    def update_transp_ui(self, obj):
+        val = getattr(obj.ViewObject, "Transparency", 0) if obj and hasattr(obj, "ViewObject") else 0
+        for p, btn in self.transp_buttons.items():
+            btn.blockSignals(True)
+            is_act = abs(p - val) < 10
+            btn.setChecked(is_act)
+            btn.setStyleSheet("background-color: #d1d1d1; border: 2px solid #555; font-weight: bold;" if is_act else "")
+            btn.blockSignals(False)
+
+    def apply_hue(self, color_name):
+        targets = self.get_targets()
+        kF = self.kFactor
+        if not targets: return
+        App.ActiveDocument.openTransaction("Color")
+        for obj in targets:
+            if not hasattr(obj, "ViewObject"): continue
+            if color_name == "Серый":
+                qc = QtGui.QColor.fromHsvF(0.0, 0.0, random.uniform(0.4, 0.8))
+            elif color_name:
+                h, s = self.palettes[color_name]
+                qc = QtGui.QColor.fromHsvF(max(0,min(1,h+random.uniform(-0.03,0.03))), max(0.3,min(1,s+random.uniform(-0.1,0.1))), 0.8)
+            else:
+                qc = QtGui.QColor.fromRgbF(random.random(), random.random(), random.random())
+            r,g,b = qc.redF(), qc.greenF(), qc.blueF()
+            vo = obj.ViewObject
+            vo.ShapeColor, vo.LineColor, vo.PointColor = (r,g,b), (r*kF, g*kF, b*kF), (r*kF, g*kF, b*kF)
+            obj.touch()
+        App.ActiveDocument.commitTransaction()
+        App.ActiveDocument.recompute()
+        Gui.updateGui()
+
+    def sync_colors(self):
+        targets = self.get_targets()
+        kF = self.kFactor
+        if not targets: return
+        App.ActiveDocument.openTransaction("Sync")
+        for obj in targets:
+            if hasattr(obj, "ViewObject"):
+                c = obj.ViewObject.ShapeColor
+                obj.ViewObject.LineColor = obj.ViewObject.PointColor = (c[0]*kF, c[1]*kF, c[2]*kF)
+                obj.touch()
+        App.ActiveDocument.commitTransaction()
+        App.ActiveDocument.recompute()
+
+    def change_transp(self, val):
+        targets = self.get_targets()
+        for obj in targets:
+            if hasattr(obj, "ViewObject"):
+                obj.ViewObject.Transparency = val
+        self.update_transp_ui(targets[0] if targets else None)
+        Gui.updateGui()
+
+    def reset_style(self):
+        targets = self.get_targets()
+        if not targets: return
+        App.ActiveDocument.openTransaction("Reset")
+        for obj in targets:
+            if hasattr(obj, "ViewObject"):
+                vo = obj.ViewObject
+                # Возвращаем цвета граней, линий и вершин к системным настройкам
+                vo.ShapeColor = self.default_shape
+                vo.LineColor = self.default_line
+                vo.PointColor = self.default_point
+                
+                # Сброс прозрачности и размеров
+                vo.Transparency = 0
+                vo.LineWidth = self.default_line_width
+                vo.PointSize = self.default_point_size
+                
+                obj.touch()
+        App.ActiveDocument.commitTransaction()
+        App.ActiveDocument.recompute()
+        # Обновляем UI кнопок прозрачности, чтобы сбросилось выделение на 0%
+        self.update_target_label()
+        if targets:
+            self.update_transp_ui(targets[0])
+
+
+    def closeEvent(self, event):
+        Gui.Selection.removeObserver(self.observer)
+        event.accept()
+
+class SelectionObserver:
+    def __init__(self, w): self.w = w
+    def addSelection(self, d, o, s, p): self.w.update_target_label()
+    def removeSelection(self, d, o, s): self.w.update_target_label()
+    def setPreselection(self, d, o, s): pass
+
+try:
+    paper_palette.close()
+    paper_palette.deleteLater()
+except: pass
+paper_palette = PapercraftTool()
+paper_palette.show()
