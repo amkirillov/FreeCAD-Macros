@@ -1,0 +1,239 @@
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+import Sketcher
+import math
+
+class SmartSurgeryFinalFix:
+    def __init__(self):
+        self.edges = []
+        self.click_points = {} # Добавляем хранилище для кликов
+
+    def addSelection(self, doc, obj_name, sub, pnt):
+        if "Edge" not in sub: return
+        idx = int(sub.replace("Edge", "")) - 1
+        
+        # Сохраняем точку клика для этого индекса (pnt - это Vector)
+        self.click_points[idx] = pnt 
+        
+        if idx not in self.edges: self.edges.append(idx)
+        if len(self.edges) == 2:
+            self.execute(App.ActiveDocument.getObject(obj_name))
+            self.finish()
+
+    def to_v(self, obj):
+        """Абсолютно надежное извлечение вектора для API 2026"""
+        try:
+            if isinstance(obj, list):
+                return self.to_v(obj[0]) if len(obj) > 0 else None
+            # Если это GeomPoint или вектор с атрибутами
+            if hasattr(obj, "Point"):
+                p = obj.Point
+                return App.Vector(float(p.x), float(p.y), float(p.z))
+            if hasattr(obj, "x"):
+                return App.Vector(float(obj.x), float(obj.y), float(obj.z))
+            if hasattr(obj, "X"):
+                return App.Vector(float(obj.X), float(obj.Y), float(obj.Z))
+            # Принудительная пересборка, если это уже вектор
+            v = App.Vector(obj)
+            return App.Vector(float(v.x), float(v.y), float(v.z))
+        except:
+            return None
+
+    def Activated(self):
+        self.edges = []
+        Gui.Selection.addObserver(self)
+        Gui.getMainWindow().statusBar().showMessage("Smart Trim: Выберите линию и дугу")
+
+    def addSelection(self, doc, obj_name, sub, pnt):
+        if "Edge" not in sub: return
+        idx = int(sub.replace("Edge", "")) - 1
+        if idx not in self.edges: self.edges.append(idx)
+        if len(self.edges) == 2:
+            self.execute(App.ActiveDocument.getObject(obj_name))
+            self.finish()
+
+    def execute(self, sketch):
+        idx1, idx2 = self.edges
+        App.ActiveDocument.openTransaction("Smart Surgery Fix 2026")
+        try:
+            g1, g2 = sketch.Geometry[idx1], sketch.Geometry[idx2]
+            
+            # 1. Создаем бесконечные кривые
+            # Используем to_v для всех точек, чтобы избежать "Second arg must be Vector"
+            v1s, v1e = self.to_v(g1.StartPoint), self.to_v(g1.EndPoint)
+            v2s, v2e = self.to_v(g2.StartPoint), self.to_v(g2.EndPoint)
+            
+            c1 = g1.Circle if isinstance(g1, Part.ArcOfCircle) else Part.Line(v1s, v1e)
+            c2 = g2.Circle if isinstance(g2, Part.ArcOfCircle) else Part.Line(v2s, v2e)
+            
+            inter_results = c1.intersect(c2)
+            
+            # Извлекаем все точки пересечения как ЧИСТЫЕ векторы
+            pts_raw = inter_results if isinstance(inter_results, list) else [inter_results]
+            pts = []
+            for p in pts_raw:
+                vec = self.to_v(p)
+                if vec: pts.append(vec)
+            
+            if not pts:
+                App.Console.PrintWarning("Нет пересечения!\n")
+                App.ActiveDocument.abortTransaction()
+                return
+
+            # 2. УМНЫЙ ВЫБОР ТОЧКИ: минимизируем искажение
+            target_v = None
+            min_delta = float('inf')
+            
+            for pt in pts:
+                d = 0
+                for g in [g1, g2]:
+                    if isinstance(g, Part.ArcOfCircle):
+                        new_p = g.Circle.parameter(pt)
+                        # Считаем разницу углов
+                        d += min(abs(new_p - g.FirstParameter), abs(new_p - g.LastParameter))
+                    else:
+                        # Считаем расстояние до ближайшего конца
+                        d += min((pt - self.to_v(g.StartPoint)).Length, (pt - self.to_v(g.EndPoint)).Length)
+                
+                if d < min_delta:
+                    min_delta = d
+                    target_v = pt
+
+            if target_v is None:
+                App.ActiveDocument.abortTransaction()
+                return
+
+            # 3. СПЕЦКЕЙС: Центр дуги на конце линии
+            arc_idx = idx1 if isinstance(g1, Part.ArcOfCircle) else (idx2 if isinstance(g2, Part.ArcOfCircle) else None)
+            line_idx = idx2 if arc_idx == idx1 else idx1
+            is_special = False
+            if arc_idx is not None:
+                arc_geo = sketch.Geometry[arc_idx]
+                line_geo = sketch.Geometry[line_idx]
+                c_v = self.to_v(arc_geo.Circle.Center)
+                if (c_v - self.to_v(line_geo.StartPoint)).Length < 1e-4 or \
+                   (c_v - self.to_v(line_geo.EndPoint)).Length < 1e-4:
+                    is_special = True
+
+            # 4. УТОЧНЕННЫЙ ВЫБОР ТОЧЕК
+            def get_pi_v2(g_idx, tv):
+                # 1. Сначала проверяем, куда кликнул пользователь
+                click_v = self.click_points.get(g_idx)
+                geo = sketch.Geometry[g_idx]
+                
+                if click_v:
+                    # Выбираем ту вершину, которая БЛИЖЕ к месту клика
+                    d1 = (self.to_v(geo.StartPoint) - click_v).Length
+                    d2 = (self.to_v(geo.EndPoint) - click_v).Length
+                    return 1 if d1 < d2 else 2
+                
+                # 2. Если клик не определен (fallback), используем старую логику
+                return 1 if (self.to_v(geo.StartPoint)-tv).Length < (self.to_v(geo.EndPoint)-tv).Length else 2
+
+            p1_idx = get_pi_v2(idx1, target_v)
+            p2_idx = get_pi_v2(idx2, target_v)
+            
+            # 5. ОЧИСТКА: Удаляем Coincident и PointOnObject
+            removed_something = True
+            while removed_something:
+                removed_something = False
+                for i in range(len(sketch.Constraints)):
+                    c = sketch.Constraints[i]
+                    is_target = False
+                    
+                    # ПРОВЕРКА 1: Удаляем совпадения точек (Coincident)
+                    if c.Type == 'Coincident':
+                        if (c.First == idx1 and c.FirstPos == p1_idx) or (c.Second == idx1 and c.SecondPos == p1_idx) or \
+                           (c.First == idx2 and c.FirstPos == p2_idx) or (c.Second == idx2 and c.SecondPos == p2_idx):
+                            is_target = True
+                        # Спецкейс для центра дуги
+                        if is_special and ((c.First == arc_idx and c.FirstPos == 3) or (c.Second == arc_idx and c.SecondPos == 3)):
+                            is_target = True
+
+                    # ПРОВЕРКА 2: Удаляем "Точка на объекте" (PointOnObject)
+                    # Это решает твой кейс: если вершина линии 2 лежит на линии 1
+                    elif c.Type == 'PointOnObject':
+                        # Если первая точка ограничения - наша вершина, а вторая - наше ребро (или наоборот)
+                        # Проверяем для обеих выбранных геометрий
+                        ids = [idx1, idx2]
+                        points = [p1_idx, p2_idx]
+                        
+                        for target_id, target_p in zip(ids, points):
+                            other_id = idx2 if target_id == idx1 else idx1
+                            # Если точка (target_p) геометрии (target_id) привязана к телу (other_id)
+                            if (c.First == target_id and c.FirstPos == target_p and c.Second == other_id) or \
+                               (c.Second == target_id and c.SecondPos == target_p and c.First == other_id):
+                                is_target = True
+
+                    if is_target:
+                        sketch.delConstraint(i)
+                        removed_something = True
+                        break 
+
+            # 6. ОБНОВЛЕНИЕ ГЕОМЕТРИИ
+            def upd(geo, v, pi):
+                # v - расчетная точка (target_v), pi - индекс точки (1-Start, 2-End)
+                if isinstance(geo, Part.LineSegment):
+                    vs, ve = self.to_v(geo.StartPoint), self.to_v(geo.EndPoint)
+                    return Part.LineSegment(v, ve) if pi == 1 else Part.LineSegment(vs, v)
+                
+                elif isinstance(geo, Part.ArcOfCircle):
+                    # 1. Получаем стабильные точки
+                    v_start = self.to_v(geo.StartPoint)
+                    v_end = self.to_v(geo.EndPoint)
+                    v_stable = v_end if pi == 1 else v_start
+                    
+                    # 2. Берем текущую середину дуги как "якорь" кривизны
+                    mid_p = (geo.FirstParameter + geo.LastParameter) / 2.0
+                    v_mid = geo.value(mid_p)
+                    
+                    # 3. Формируем новую дугу по 3 точкам (Start, Mid, End)
+                    try:
+                        if pi == 1:
+                            # v становится новой точкой 1
+                            new_arc = Part.ArcOfCircle(v, v_mid, v_stable)
+                        else:
+                            # v становится новой точкой 2
+                            new_arc = Part.ArcOfCircle(v_stable, v_mid, v)
+                        return new_arc
+                    except Exception as e:
+                        App.Console.PrintWarning(f"Ошибка 3-х точек: {e}. Откат к радиусу.\n")
+                        # Резервный вариант, если 3 точки на одной прямой
+                        return geo
+                return geo
+
+            gl = sketch.Geometry
+            gl[idx1], gl[idx2] = upd(g1, target_v, p1_idx), upd(g2, target_v, p2_idx)
+            sketch.Geometry = gl
+            
+            # 7. НАЛОЖЕНИЕ ОГРАНИЧЕНИЙ
+            sketch.addConstraint(Sketcher.Constraint('Coincident', idx1, p1_idx, idx2, p2_idx))
+            if is_special:
+                sketch.addConstraint(Sketcher.Constraint('PointOnObject', arc_idx, 3, line_idx))
+
+            App.ActiveDocument.commitTransaction()
+            sketch.recompute()
+            App.Console.PrintMessage(">>> Готово. Дуга не перекручена, связи восстановлены.\n")
+        except Exception as e:
+            App.Console.PrintError(f"Error: {e}\n")
+            if App.ActiveDocument: App.ActiveDocument.abortTransaction()
+
+    def finish(self):
+        # Снимаем выделение со всех объектов
+        Gui.Selection.clearSelection()       
+        # Стандартное завершение
+        Gui.Selection.removeObserver(self)
+        Gui.getMainWindow().statusBar().clearMessage()
+
+if __name__ == "__main__":
+    try: 
+        Gui.Selection.removeObserver(surgery_final_fix_v2)
+    except: 
+        pass  
+    # Рекомендуется также сбросить выделение перед стартом нового экземпляра
+    Gui.Selection.clearSelection()
+    
+    surgery_final_fix_v2 = SmartSurgeryFinalFix()
+    surgery_final_fix_v2.Activated() # Обычно в FreeCAD вызывается Activated или вручную
+
