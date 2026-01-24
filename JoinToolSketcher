@@ -62,14 +62,20 @@ class SmartSurgeryTool(QtCore.QObject):
 
     def eventFilter(self, obj, event):
         if not self.active: return False
+        
+        # Выход только по ESC или ПКМ
         if (event.type() == QtCore.QEvent.KeyPress and event.key() == QtCore.Qt.Key_Escape) or \
            (event.type() == QtCore.QEvent.MouseButtonPress and event.button() == QtCore.Qt.RightButton):
+            App.Console.PrintMessage(">>> Завершение работы инструмента по запросу пользователя.\n")
             QtCore.QTimer.singleShot(0, self.finish)
             return True
         return False
 
+
     def addSelection(self, doc_name, obj_name, sub, pnt):
-        if not self.active or not sub or "Edge" not in sub: return
+        if not self.active or not sub or "Edge" not in sub:
+            return
+        
         doc = App.getDocument(doc_name)
         if not doc: return
         obj = doc.getObject(obj_name)
@@ -79,14 +85,35 @@ class SmartSurgeryTool(QtCore.QObject):
         try:
             idx = int(sub.replace("Edge", "")) - 1
             self.click_points[idx] = self.to_v(pnt)
+            
             if idx not in self.edges:
                 self.edges.append(idx)
                 App.Console.PrintMessage(f"Выбрано {len(self.edges)}/2: {sub}\n")
+            
             if len(self.edges) == 2:
+                # 1. Выполняем операцию
                 self.execute(obj)
-                QtCore.QTimer.singleShot(0, self.finish)
+                
+                # 2. СБРОС ДАННЫХ ДЛЯ ЦИКЛА (Вместо finish)
+                self.edges = []
+                self.click_points = {}
+                Gui.Selection.clearSelection()
+                
+                self._mw.statusBar().showMessage("Smart Surgery: Готов к новой паре.")
+                App.Console.PrintMessage(">>> Готов к следующей паре (ESC для выхода)...\n")
+                
         except Exception as e:
-            App.Console.PrintError(f"Ошибка выбора: {e}\n")
+            App.Console.PrintError(f"Ошибка выбора: {str(e)}\n")
+
+
+    def reset_tool(self):
+        """Сбрасывает накопленные данные для следующего шага, не выключая макрос"""
+        self.edges = []
+        self.click_points = {}
+        Gui.Selection.clearSelection() # Снимаем подсветку с ребер
+        self._mw.statusBar().showMessage("Smart Surgery: Готов к новой операции. Выберите 2 ребра.")
+        App.Console.PrintMessage(">>> Готов к следующей паре...\n")
+
 
     def execute(self, sketch):
         if len(self.edges) < 2: return
