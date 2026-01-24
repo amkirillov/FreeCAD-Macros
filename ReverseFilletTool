@@ -1,0 +1,95 @@
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+import Sketcher
+from PySide import QtGui
+
+def create_pro_cut_v120():
+    selection_ex = Gui.Selection.getSelectionEx()
+    if not selection_ex: return
+
+    # 1. Сбор и группировка ребер в цепочки
+    selected_edges = []
+    for sel in selection_ex:
+        for sub in sel.SubElementNames:
+            if "Edge" in sub:
+                edge_geom = sel.Object.Shape.getElement(sub)
+                selected_edges.append({'obj': sel.Object, 'name': sub, 'edge': edge_geom})
+
+    if not selected_edges: return
+
+    chains = []
+    while selected_edges:
+        current_chain = [selected_edges.pop(0)]
+        found = True
+        while found:
+            found = False
+            for i in range(len(selected_edges)):
+                e1 = current_chain[-1]['edge']
+                e2 = selected_edges[i]['edge']
+                if e1.Vertex1.Point == e2.Vertex1.Point or e1.Vertex1.Point == e2.Vertex2.Point or \
+                   e1.Vertex2.Point == e2.Vertex1.Point or e1.Vertex2.Point == e2.Vertex2.Point:
+                    current_chain.append(selected_edges.pop(i))
+                    found = True
+                    break
+        chains.append(current_chain)
+
+    # 2. Запрос радиуса
+    radius, ok = QtGui.QInputDialog.getDouble(None, "Pro Cut 1.2.0", "Радиус (мм):", 2.0, 0.1, 100.0, 2)
+    if not ok: return
+
+    doc = App.activeDocument()
+    gui_doc = Gui.activeDocument()
+
+    # 3. Обработка каждой цепочки
+    for chain in chains:
+        first = chain[0]
+        obj = first['obj']
+        body = next((p for p in obj.InList if p.isDerivedFrom('PartDesign::Body')), None)
+        
+        if not body: continue
+
+        # Создаем эскиз (API 1.2.0dev)
+        sk = body.newObject('Sketcher::SketchObject', f"Sketch_{first['name']}")
+        sk.AttachmentSupport = [(obj, [first['name']])]
+        sk.MapMode = 'NormalToEdge'
+        sk.AttachmentOffset = App.Placement(App.Vector(0,0,0), App.Rotation(0,0,0))
+        
+        sk.addGeometry(Part.Circle(App.Vector(0,0,0), App.Vector(0,0,1), radius))
+        doc.recompute()
+
+        # Создаем вырез (SubtractivePipe)
+        pipe = body.newObject('PartDesign::SubtractivePipe', f"Pipe_{first['name']}")
+        pipe.Profile = sk
+        
+        # Задаем траекторию
+        all_edge_names = [e['name'] for e in chain]
+        pipe.Spine = (obj, all_edge_names)
+        
+        # --- УСТАНОВКА РЕЖИМОВ (Специфика 1.2.0dev) ---
+        
+        # 1. Ориентация профиля: Standard
+        try:
+            pipe.Mode = 'Standard'
+        except:
+            pipe.Mode = 0 # Индекс для Standard
+            
+        # 2. Обработка углов: Right corner
+        try:
+            pipe.Transition = 'Right corner'
+        except:
+            pipe.Transition = 1 # Индекс для Right corner
+
+        doc.recompute()
+        
+        # Скрываем эскиз
+        try:
+            sk_view = gui_doc.getObject(sk.Name)
+            if sk_view:
+                sk_view.Visibility = False
+        except: pass
+
+    App.Console.PrintMessage(f"Успех. Цепочек: {len(chains)}. Режимы: Standard + Right corner.\n")
+
+if __name__ == "__main__":
+    create_pro_cut_v120()
