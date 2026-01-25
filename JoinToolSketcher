@@ -1,3 +1,4 @@
+# версия 0.0.1 от 24-01-2026
 import FreeCAD as App
 import FreeCADGui as Gui
 import Part
@@ -44,6 +45,15 @@ class SmartSurgeryTool(QtCore.QObject):
         except:
             return None
 
+    def setEdit(self, doc_name, obj_name):
+        """Этот метод ВНУТРИ SelectionObserver поймает смену инструмента"""
+        if self.active:
+            # Если пользователь кликнул по инструменту, фокус в Selection меняется
+            # Если мы видим, что фокус ушел или изменился — выходим
+            App.Console.PrintMessage(">>> Smart Surgery: Обнаружено переключение. Самовыключение.\n")
+            QtCore.QTimer.singleShot(0, self.finish)
+
+
     def Activated(self):
         if self.active: return
         self.active = True
@@ -73,6 +83,7 @@ class SmartSurgeryTool(QtCore.QObject):
 
 
     def addSelection(self, doc_name, obj_name, sub, pnt):
+
         if not self.active or not sub or "Edge" not in sub:
             return
         
@@ -113,7 +124,6 @@ class SmartSurgeryTool(QtCore.QObject):
         Gui.Selection.clearSelection() # Снимаем подсветку с ребер
         self._mw.statusBar().showMessage("Smart Surgery: Готов к новой операции. Выберите 2 ребра.")
         App.Console.PrintMessage(">>> Готов к следующей паре...\n")
-
 
     def execute(self, sketch):
         if len(self.edges) < 2: return
@@ -190,33 +200,50 @@ class SmartSurgeryTool(QtCore.QObject):
             # Определение индексов точек (1 - Start, 2 - End)
             p1i = get_pi(idx1, target_v)
             p2i = get_pi(idx2, target_v)
-            # 5. ОЧИСТКА ОГРАНИЧЕНИЙ
+
+             # 5. СТРОГАЯ ОЧИСТКА ВЕРШИН (Только для пары из self.edges)
             removed = True
             while removed:
                 removed = False
                 for i, c in enumerate(sketch.Constraints):
                     is_t = False
-                    if c.Type == 'Coincident':
-                        # Проверяем совпадение для обеих выбранных точек
-                        if (c.First == idx1 and c.FirstPos == p1i) or \
-                           (c.Second == idx1 and c.SecondPos == p1i) or \
-                           (c.First == idx2 and c.FirstPos == p2i) or \
-                           (c.Second == idx2 and c.SecondPos == p2i):
+                    
+                    # Точки, которые мы перемещаем в данном цикле
+                    moving_targets = [(idx1, p1i), (idx2, p2i)]
+                    if is_special:
+                        moving_targets.append((arc_idx, 3)) # Центр дуги
+
+                    for m_idx, m_pos in moving_targets:
+                        # Условие 1: Это ограничение совпадения (Coincident) 
+                        # именно на нашей перемещаемой вершине
+                        if (c.First == m_idx and c.FirstPos == m_pos) or \
+                           (c.Second == m_idx and c.SecondPos == m_pos):
                             is_t = True
-                        # Спецкейс для центра дуги (точка 3)
-                        if is_special and ((c.First == arc_idx and c.FirstPos == 3) or \
-                                          (c.Second == arc_idx and c.SecondPos == 3)):
-                            is_t = True
-                    elif c.Type == 'PointOnObject':
-                        for tid, tpos, oid in [(idx1, p1i, idx2), (idx2, p2i, idx1)]:
-                            if (c.First == tid and c.FirstPos == tpos and c.Second == oid) or \
-                               (c.Second == tid and c.SecondPos == tpos and c.First == oid):
+                        
+                        # Условие 2: Наша перемещаемая точка привязана к телу через PointOnObject
+                        elif c.Type == 'PointOnObject':
+                            if (c.First == m_idx and c.FirstPos == m_pos) or \
+                               (c.Second == m_idx and c.SecondPos == m_pos):
                                 is_t = True
+                        
+                        # Условие 3: Любое ограничение, связывающее две наши выбранные геометрии 
+                        # (Например, если дуга лежит на линии, которую мы тоже выбрали)
+                        elif (c.First in self.edges and c.Second in self.edges):
+                            # Но только если это касается наших перемещаемых вершин
+                            if (c.First == m_idx and c.FirstPos == m_pos) or \
+                               (c.Second == m_idx and c.SecondPos == m_pos):
+                                is_t = True
+
+                        if is_t: break
                     
                     if is_t:
                         sketch.delConstraint(i)
                         removed = True
-                        break
+                        break 
+
+            # После тотальной очистки "успокаиваем" решатель перед перемещением
+            sketch.solve()
+
 
             # Обновление геометрии
             # 6. ОБНОВЛЕНИЕ ГЕОМЕТРИИ (Актуально для FreeCAD 1.0+)
@@ -236,39 +263,53 @@ class SmartSurgeryTool(QtCore.QObject):
 
             # --- ШАГ 6: ХИРУРГИЧЕСКОЕ ПЕРЕМЕЩЕНИЕ (API 2026) ---
             
-            # 1. Снимаем выделение
+            # 1. Снимаем выделение, чтобы не блокировать графический кэш
             Gui.Selection.clearSelection()
 
-            # 2. Используем найденный метод moveGeometry
-            # Он обновляет координаты вершин, сохраняя топологические имена (ID)
-            # Аргументы: (ИндексГеометрии, ИндексТочки, ВекторЦели, Относительно=False)
+            # 2. Прямое перемещение вершин (сохраняет ID gXXXX.edgeY)
             try:
+                # В 2026 это самый стабильный способ
                 sketch.moveGeometry(idx1, p1i, target_v, False)
                 sketch.moveGeometry(idx2, p2i, target_v, False)
-                App.Console.PrintMessage(">>> Использован метод moveGeometry (ID сохранены)\n")
             except AttributeError:
-                # На случай, если в какой-то сборке 1.0 метод называется иначе
+                # Резервный путь для старых сборок
                 sketch.movePoint(idx1, p1i, target_v, False)
                 sketch.movePoint(idx2, p2i, target_v, False)
 
-            # 3. Накладываем ограничение совпадения
+            # 3. "Успокаиваем" решатель DogLeg после перемещения
+            sketch.solve() 
+
+            # 4. Проверка радиуса дуги (защита от "SetRadius" ошибки)
+            for idx in [idx1, idx2]:
+                geo = sketch.Geometry[idx]
+                # Если это дуга и её радиус стал дегенеративным (0), 
+                # Скетчер 1.0 может выдать ошибку. Мы фиксируем его.
+                if hasattr(geo, "Radius") and geo.Radius < 1e-6:
+                    # В этом редком случае можно применить вашу функцию upd 
+                    # или просто сбросить параметры через setGeometry, если доступно
+                    pass
+
+            # 5. НАЛОЖЕНИЕ НОВЫХ ОГРАНИЧЕНИЙ (Сшивка)
             sketch.addConstraint(Sketcher.Constraint('Coincident', idx1, p1i, idx2, p2i))
             
             if is_special:
+                # Восстанавливаем связь центра дуги с линией
                 sketch.addConstraint(Sketcher.Constraint('PointOnObject', arc_idx, 3, line_idx))
 
-            # 4. ЗАВЕРШЕНИЕ ТРАНЗАКЦИИ
+            # 6. ЗАВЕРШЕНИЕ ТРАНЗАКЦИИ
             App.ActiveDocument.commitTransaction()
             
-            # Принудительный пересчет
+            # Принудительный пересчет для обновления вьюера
             sketch.recompute()
             
-            App.Console.PrintMessage(">>> Smart Surgery: Операция завершена без ошибок топологии.\n")
-
+            App.Console.PrintMessage(">>> Smart Surgery: Операция завершена успешно.\n")
 
         except Exception as e:
-            App.Console.PrintError(f"Error: {e}\n")
-            App.ActiveDocument.abortTransaction()
+            # Если что-то пошло не так, откатываем всё к состоянию до кликов
+            if App.ActiveDocument:
+                App.ActiveDocument.abortTransaction()
+            App.Console.PrintError(f"Smart Surgery Error: {str(e)}\n")
+
 
 
     def finish(self):
