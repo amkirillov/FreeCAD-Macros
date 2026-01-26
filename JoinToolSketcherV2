@@ -1,0 +1,357 @@
+# версия 0.0.1 от 24-01-2026
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+import Sketcher
+from PySide6 import QtGui, QtCore, QtWidgets
+
+class SmartSurgeryTool(QtCore.QObject):
+    def __init__(self):
+        super().__init__()
+        self.active = False
+        self._mw = Gui.getMainWindow()
+        self.edges = []
+        self.click_points = {}
+        self.cursor_pixmap = self._create_circle_pixmap()
+        self.custom_cursor = QtGui.QCursor(self.cursor_pixmap, 12, 12)
+
+    def _create_circle_pixmap(self):
+        size = 24
+        pix = QtGui.QPixmap(size, size)
+        pix.fill(QtCore.Qt.transparent)
+        painter = QtGui.QPainter(pix)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing)
+        painter.setPen(QtGui.QPen(QtGui.QColor(255, 0, 0, 180), 1.5))
+        painter.drawEllipse(4, 4, size-8, size-8)
+        painter.end()
+        return pix
+
+    def to_v(self, obj):
+        """Абсолютно надежное извлечение вектора для API 2026"""
+        try:
+            if isinstance(obj, list):
+                return self.to_v(obj[0]) if len(obj) > 0 else None
+            # Если это GeomPoint или вектор с атрибутами
+            if hasattr(obj, "Point"):
+                p = obj.Point
+                return App.Vector(float(p.x), float(p.y), float(p.z))
+            if hasattr(obj, "x"):
+                return App.Vector(float(obj.x), float(obj.y), float(obj.z))
+            if hasattr(obj, "X"):
+                return App.Vector(float(obj.X), float(obj.Y), float(obj.Z))
+            # Принудительная пересборка, если это уже вектор
+            v = App.Vector(obj)
+            return App.Vector(float(v.x), float(v.y), float(v.z))
+        except:
+            return None
+
+    def setEdit(self, doc_name, obj_name):
+        """Этот метод ВНУТРИ SelectionObserver поймает смену инструмента"""
+        if self.active:
+            # Если пользователь кликнул по инструменту, фокус в Selection меняется
+            # Если мы видим, что фокус ушел или изменился — выходим
+            App.Console.PrintMessage(">>> Smart Surgery: Обнаружено переключение. Самовыключение.\n")
+            QtCore.QTimer.singleShot(0, self.finish)
+
+
+    def Activated(self):
+        if self.active: return
+        self.active = True
+        self.edges = []
+        self.click_points = {}
+        QtWidgets.QApplication.setOverrideCursor(self.custom_cursor)
+        Gui.Selection.addObserver(self)
+        self._mw.installEventFilter(self)
+        view = Gui.activeView()
+        if view and hasattr(view, 'graphicsView'):
+            gv = view.graphicsView()
+            gv.installEventFilter(self)
+            if gv.viewport(): gv.viewport().installEventFilter(self)
+        self._mw.statusBar().showMessage("Smart Surgery: Выберите линию и дугу")
+        App.Console.PrintMessage("\n>>> Smart Surgery: Активен. ESC для отмены.\n")
+
+    def eventFilter(self, obj, event):
+        if not self.active: return False
+        
+        # Выход только по ESC или ПКМ
+        if (event.type() == QtCore.QEvent.KeyPress and event.key() == QtCore.Qt.Key_Escape) or \
+           (event.type() == QtCore.QEvent.MouseButtonPress and event.button() == QtCore.Qt.RightButton):
+            App.Console.PrintMessage(">>> Завершение работы инструмента по запросу пользователя.\n")
+            QtCore.QTimer.singleShot(0, self.finish)
+            return True
+        return False
+
+
+    def addSelection(self, doc_name, obj_name, sub, pnt):
+
+        if not self.active or not sub or "Edge" not in sub:
+            return
+        
+        doc = App.getDocument(doc_name)
+        if not doc: return
+        obj = doc.getObject(obj_name)
+        if not obj or not obj.isDerivedFrom("Sketcher::SketchObject"): 
+            return
+
+        try:
+            idx = int(sub.replace("Edge", "")) - 1
+            self.click_points[idx] = self.to_v(pnt)
+            
+            if idx not in self.edges:
+                self.edges.append(idx)
+                App.Console.PrintMessage(f"Выбрано {len(self.edges)}/2: {sub}\n")
+            
+            if len(self.edges) == 2:
+                # 1. Выполняем операцию
+                self.execute(obj)
+                
+                # 2. СБРОС ДАННЫХ ДЛЯ ЦИКЛА (Вместо finish)
+                self.edges = []
+                self.click_points = {}
+                Gui.Selection.clearSelection()
+                
+                self._mw.statusBar().showMessage("Smart Surgery: Готов к новой паре.")
+                App.Console.PrintMessage(">>> Готов к следующей паре (ESC для выхода)...\n")
+                
+        except Exception as e:
+            App.Console.PrintError(f"Ошибка выбора: {str(e)}\n")
+
+
+    def reset_tool(self):
+        """Сбрасывает накопленные данные для следующего шага, не выключая макрос"""
+        self.edges = []
+        self.click_points = {}
+        Gui.Selection.clearSelection() # Снимаем подсветку с ребер
+        self._mw.statusBar().showMessage("Smart Surgery: Готов к новой операции. Выберите 2 ребра.")
+        App.Console.PrintMessage(">>> Готов к следующей паре...\n")
+
+    def execute(self, sketch):
+        if len(self.edges) < 2: return
+        idx1, idx2 = self.edges[0], self.edges[1]
+        g1, g2 = sketch.Geometry[idx1], sketch.Geometry[idx2]
+        
+        # Инициализируем переменные
+        arc_idx = None
+        line_idx = None
+        is_special = False
+        special_info = {}
+
+        # Определяем, кто из них дуга, а кто линия (или вторая линия)
+        if isinstance(g1, Part.ArcOfCircle):
+            arc_idx = idx1
+            line_idx = idx2
+        elif isinstance(g2, Part.ArcOfCircle):
+            arc_idx = idx2
+            line_idx = idx1
+        else:
+            # Случай Линия + Линия
+            line_idx = idx1 # или любая логика для двух линий
+
+        App.ActiveDocument.openTransaction("Smart Surgery Fix 2026")
+        try:
+            # --- Для дуг сразу извлекаем центры и ищем связи ---
+            # Словарь для хранения информации о центрах (индекс_геометрии: вектор_центра)
+            centers = {}
+            for i, g in [(idx1, g1), (idx2, g2)]:
+                if isinstance(g, Part.ArcOfCircle):
+                    centers[i] = self.to_v(g.Circle.Center)
+
+            # Проверяем, связаны ли центры с нашими объектами
+            is_special = False
+            special_info = {} # Храним тип связи и индекс точки для восстановления
+
+            if centers:
+                for c in sketch.Constraints:
+                    # Ищем связи центра дуги (3) с "партнером"
+                    for a_idx in centers:
+                        l_idx = idx2 if a_idx == idx1 else idx1
+                        
+                        # Проверяем PointOnObject и Coincident
+                        if (c.First == a_idx and c.FirstPos == 3 and c.Second == l_idx) or \
+                           (c.Second == a_idx and c.SecondPos == 3 and c.First == l_idx):
+                            is_special = True
+                            special_info = {
+                                'arc_idx': a_idx,
+                                'line_idx': l_idx,
+                                'type': c.Type,
+                                'pos': c.SecondPos if c.First == a_idx else c.FirstPos
+                            }
+                            break
+            
+            # 1. Извлекаем точки (используем to_v)
+            v1s, v1e = self.to_v(g1.StartPoint), self.to_v(g1.EndPoint)
+            v2s, v2e = self.to_v(g2.StartPoint), self.to_v(g2.EndPoint)
+            
+            # 2. Создаем бесконечные кривые для пересечения
+            # В 2026 году для Line важно, чтобы это были именно Part.Line (бесконечные)
+            if isinstance(g1, Part.ArcOfCircle):
+                c1 = g1.Circle
+            else:
+                c1 = Part.Line(v1s, v1e)
+                
+            if isinstance(g2, Part.ArcOfCircle):
+                c2 = g2.Circle
+            else:
+                c2 = Part.Line(v2s, v2e)
+            
+            # Находим пересечение
+            inter_results = c1.intersect(c2)
+            
+            # 3. Извлекаем точки
+            pts_raw = inter_results if isinstance(inter_results, list) else [inter_results]
+            pts = []
+            for p in pts_raw:
+                vec = self.to_v(p)
+                if vec:
+                    # Для стабильности скетчера обнуляем Z результата
+                    pts.append(App.Vector(vec.x, vec.y, 0))
+            
+            if not pts:
+                App.Console.PrintWarning("Smart Surgery: Пересечение не найдено.\n")
+                App.ActiveDocument.abortTransaction()
+                return
+
+            # Выбор ближайшей точки пересечения к местам кликов/концам
+            target_v = None
+            min_delta = float('inf')
+            for pt in pts:
+                d = 0
+                for g in [g1, g2]:
+                    if isinstance(g, Part.ArcOfCircle):
+                        # Для дуги считаем расстояние по параметру окружности
+                        new_p = g.Circle.parameter(pt)
+                        d += min(abs(new_p - g.FirstParameter), abs(new_p - g.LastParameter))
+                    else:
+                        # Для линии — обычное расстояние до ближайшего конца
+                        d += min((pt - self.to_v(g.StartPoint)).Length, (pt - self.to_v(g.EndPoint)).Length)
+                
+                if d < min_delta:
+                    min_delta, target_v = d, pt
+
+
+            # --- ОПРЕДЕЛЕНИЕ ТОЧЕК И СПЕЦКЕЙСА ---
+            def get_pi(g_idx, tv):
+                click_v = self.click_points.get(g_idx)
+                geo = sketch.Geometry[g_idx]
+                if click_v:
+                    return 1 if (self.to_v(geo.StartPoint)-click_v).Length < (self.to_v(geo.EndPoint)-click_v).Length else 2
+                return 1 if (self.to_v(geo.StartPoint)-tv).Length < (self.to_v(geo.EndPoint)-tv).Length else 2
+
+            p1i = get_pi(idx1, target_v)
+            p2i = get_pi(idx2, target_v)
+
+            # Теперь is_special у нас уже определен в начале функции (через поиск связей центра 3)
+            # Формируем список целей для удаления связей
+            moving_targets = [(idx1, p1i), (idx2, p2i)]
+            if is_special:
+                moving_targets.append((arc_idx, 3)) # Добавляем центр дуги
+
+            # --- 5. ТОЧЕЧНАЯ ОЧИСТКА (API 2026) ---
+            # Собираем только те ограничения, которые мешают движению конкретных точек
+            constraints_to_del = []
+            for i, c in enumerate(sketch.Constraints):
+                should_delete = False
+                
+                # Проверяем, касается ли ограничение любой из наших движущихся точек
+                for m_idx, m_pos in moving_targets:
+                    if (c.First == m_idx and c.FirstPos == m_pos) or \
+                       (c.Second == m_idx and c.SecondPos == m_pos):
+                        should_delete = True
+                        break
+                
+                # Дополнительно: удаляем любые связи PointOnObject между этой парой объектов
+                # чтобы решатель не блокировал изменение длины
+                if not should_delete and (c.First in self.edges and c.Second in self.edges):
+                    if c.Type == 'PointOnObject' or c.Type == 'Coincident':
+                        should_delete = True
+
+                if should_delete:
+                    constraints_to_del.append(i)
+
+            # Удаляем один раз в обратном порядке (стабильный метод)
+            for i in sorted(constraints_to_del, reverse=True):
+                sketch.delConstraint(i)
+
+            # "Успокаиваем" решатель перед операцией перемещения
+            sketch.solve()
+
+
+
+             # --- ШАГ 6: ЗАЩИТА ОТ ПЕРЕКРУЧИВАНИЯ (API 2026) ---
+            Gui.Selection.clearSelection()
+
+            for idx in [idx1, idx2]:
+                geo = sketch.Geometry[idx]
+                p_idx = p1i if idx == idx1 else p2i
+                
+                if isinstance(geo, Part.ArcOfCircle):
+                    # 1. Извлекаем текущие параметры
+                    v_start = self.to_v(geo.StartPoint)
+                    v_end = self.to_v(geo.EndPoint)
+                    # КЛЮЧЕВОЙ МОМЕНТ: берем старую середину дуги как "якорь" направления
+                    v_mid_old = geo.value((geo.FirstParameter + geo.LastParameter) / 2.0)
+                    
+                    # 2. Определяем, какую точку мы заменяем на target_v
+                    new_start = target_v if p_idx == 1 else v_start
+                    new_end = target_v if p_idx == 2 else v_end
+                    
+                    try:
+                        # 3. Пересоздаем дугу через 3 точки. 
+                        # В 2026 году это единственный способ заставить дугу 
+                        # сохранить направление обхода при сложных углах линии.
+                        new_arc = Part.ArcOfCircle(new_start, v_mid_old, new_end)
+                        sketch.setGeometry(int(idx), new_arc)
+                    except:
+                        # Если точки совпали, используем обычный сдвиг
+                        sketch.moveGeometry(int(idx), int(p_idx), target_v, False)
+                else:
+                    # Для линий перекручивание невозможно
+                    sketch.moveGeometry(int(idx), int(p_idx), target_v, False)
+
+
+
+            # --- ШАГ 7: ВОССТАНОВЛЕНИЕ ОСТАЛЬНЫХ СВЯЗЕЙ ---
+            # Сшивка концов
+            sketch.addConstraint(Sketcher.Constraint('Coincident', int(idx1), int(p1i), int(idx2), int(p2i)))
+            
+            # Центр дуги на линию (как в вашем удачном примере)
+            if is_special and arc_idx is not None:
+                try:
+                    sketch.addConstraint(Sketcher.Constraint('PointOnObject', int(arc_idx), 3, int(line_idx)))
+                except: pass
+
+            sketch.solve()
+            App.ActiveDocument.commitTransaction()
+            App.ActiveDocument.recompute()
+
+
+            App.Console.PrintMessage(">>> Smart Surgery 2026: Операция выполнена успешно.\n")
+
+        except Exception as e:
+            # Если что-то пошло не так, откатываем всё к состоянию до кликов
+            if App.ActiveDocument:
+                App.ActiveDocument.abortTransaction()
+            App.Console.PrintError(f"Smart Surgery Error: {str(e)}\n")
+
+
+
+    def finish(self):
+        if not self.active: return
+        self.active = False
+        Gui.Selection.clearSelection()
+        Gui.Selection.removeObserver(self)
+        self._mw.removeEventFilter(self)
+        self._mw.statusBar().clearMessage()
+        view = Gui.activeView()
+        if view and hasattr(view, 'graphicsView'):
+            gv = view.graphicsView()
+            gv.removeEventFilter(self)
+            if gv.viewport(): gv.viewport().removeEventFilter(self)
+        while QtWidgets.QApplication.overrideCursor() is not None:
+            QtWidgets.QApplication.restoreOverrideCursor()
+        App.Console.PrintMessage(">>> Smart Surgery: Выключен.\n")
+
+if __name__ == "__main__":
+    if hasattr(Gui, "SmartSurgeryInstance"): Gui.SmartSurgeryInstance.finish()
+    Gui.SmartSurgeryInstance = SmartSurgeryTool()
+    Gui.SmartSurgeryInstance.Activated()
