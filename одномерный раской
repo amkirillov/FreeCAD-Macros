@@ -2,144 +2,68 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>Раскрой 1D: Полный производственный отчет</title>
+    <title>Раскрой 1D: Профессиональный инструмент</title>
     <style>
         body { font-family: 'Segoe UI', sans-serif; padding: 20px; background: #eceff1; color: #333; font-size: 13px; }
-        .container { max-width: 1100px; margin: 0 auto; }
+        .container { max-width: 1150px; margin: 0 auto; }
         .panel { background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 15px; }
-        h2 { margin: 0 0 10px 0; color: #2c3e50; border-bottom: 2px solid #eee; font-size: 1rem; }
+        h2 { margin: 0 0 10px 0; color: #2c3e50; border-bottom: 2px solid #eee; font-size: 1rem; display: flex; justify-content: space-between; align-items: center;}
         
-        .settings-grid { display: grid; grid-template-columns: 1.2fr 80px 70px 70px 90px 1.2fr; gap: 8px; margin-bottom: 15px; }
+        /* Сетка настроек */
+        .settings-grid { display: grid; grid-template-columns: 1.5fr 100px 80px 80px 90px 1.5fr; gap: 10px; margin-bottom: 15px; }
         .input-group { display: flex; flex-direction: column; }
         label { font-size: 9px; font-weight: bold; margin-bottom: 3px; color: #777; text-transform: uppercase; }
-        input { padding: 6px 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px; }
+        input, select { padding: 7px 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px; background: white; }
 
-        .items-row, .stock-row { display: grid; gap: 5px; margin-bottom: 5px; align-items: center; }
-        .items-row { grid-template-columns: 2fr 1fr 70px 35px; }
-        .stock-row { grid-template-columns: 1fr 70px 35px; }
+        .items-row { display: grid; grid-template-columns: 2fr 1fr 80px 35px; gap: 5px; margin-bottom: 5px; }
+        .stock-row { display: grid; grid-template-columns: 1fr 80px 70px 35px; gap: 5px; margin-bottom: 5px; align-items: center; }
         
-        .btn { padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
-        .btn-add { background: #007bff; color: white; font-size: 10px; margin-left: 5px; }
+        .btn { padding: 8px 12px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; height: 36px; display: flex; align-items: center; justify-content: center; }
         .btn-calc { background: #28a745; color: white; flex: 2; font-size: 15px; }
-        .btn-print { background: #607d8b; color: white; flex: 1; }
-        .btn-del { background: #ef5350; color: white; }
+        .btn-add { background: #007bff; color: white; font-size: 10px; height: 24px; padding: 0 10px; }
+        .btn-del { background: #ef5350; color: white; height: 32px; width: 32px; padding: 0; }
+        
+        .actions { display: flex; gap: 10px; margin-top: 15px; align-items: flex-end; }
+        .actions .input-group { flex: 1; min-width: 150px; }
 
-        /* Таблица заготовок */
-        .summary-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; background: white; border-radius: 5px; overflow: hidden; }
+        /* Таблицы */
+        .summary-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; background: white; }
         .summary-table th, .summary-table td { border: 1px solid #cfd8dc; padding: 6px 10px; text-align: left; }
-        .summary-table th { background: #f8f9fa; font-size: 11px; text-transform: uppercase; color: #666; }
+        .summary-table th { background: #f8f9fa; font-size: 11px; color: #666; }
 
-        .bin-container { margin-bottom: 10px; border: 1px solid #cfd8dc; padding: 8px; border-radius: 5px; background: #fff; page-break-inside: avoid; }
-        .bin-info { font-size: 11px; margin-bottom: 4px; display: flex; justify-content: space-between; color: #555; }
-        .bin-bar { 
-            height: 32px; background: #eee; display: flex; border-radius: 3px; overflow: hidden; border: 1px solid #ccc; 
-            -webkit-print-color-adjust: exact; print-color-adjust: exact; 
-        }
+        /* Хлысты */
+        .bin-container { margin-bottom: 15px; border: 1px solid #cfd8dc; padding: 10px; border-radius: 6px; background: #fff; page-break-inside: avoid; }
+        .bin-info { font-size: 12px; margin-bottom: 6px; display: flex; justify-content: space-between; }
+        .bin-bar { height: 32px; background: #eee; display: flex; border-radius: 4px; overflow: hidden; border: 1px solid #ccc; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
         
-        .part { 
-            height: 100%; border-right: 1px solid rgba(255,255,255,0.3); 
-            display: flex; flex-direction: column; align-items: center; justify-content: center; 
-            color: white; font-size: 9px; font-weight: bold; overflow: hidden;
-            -webkit-print-color-adjust: exact; print-color-adjust: exact; 
-        }
-        .part span { font-size: 7px; opacity: 0.95; font-weight: normal; margin-top: -1px; white-space: nowrap; }
-        .trim { 
-            height: 100%; 
-            background: #ff0000 !important; 
-            flex-shrink: 0;
-            -webkit-print-color-adjust: exact; 
-            print-color-adjust: exact; 
-            border-left: 1px solid rgba(0,0,0,0.1);
-            border-right: 1px solid rgba(0,0,0,0.1);
-        }
-        .kerf { height: 100%; background: #333 !important; -webkit-print-color-adjust: exact; }
-        .waste { 
-            height: 100%; 
-            /* Создаем штриховку под 45 градусов */
-            background: repeating-linear-gradient(
-                45deg,
-                #fdfdfd,
-                #fdfdfd 5px,
-                #eeeeee 5px,
-                #eeeeee 10px
-            ) !important;
-            color: #888; 
-            font-size: 9px; 
-            display: flex; 
-            align-items: center; 
-            padding-left: 4px; 
-            flex-grow: 1; 
-            min-width: 0;
-            border-left: 1px solid #ccc;
-            /* Принудительная печать штриховки */
-            -webkit-print-color-adjust: exact; 
-            print-color-adjust: exact; 
-        }
+        .part { height: 100%; border-right: 1px solid rgba(255,255,255,0.3); display: flex; flex-direction: column; align-items: center; justify-content: center; color: white; font-size: 10px; font-weight: bold; overflow: hidden; -webkit-print-color-adjust: exact; print-color-adjust: exact; text-shadow: 0 1px 1px rgba(0,0,0,0.5); }
+        .part span { font-size: 8px; opacity: 0.9; font-weight: normal; margin-top: -1px; white-space: nowrap; }
 
+        .trim { height: 100%; background: #ff0000 !important; -webkit-print-color-adjust: exact; flex-shrink: 0; }
+        .kerf { height: 100%; background: #333 !important; flex-shrink: 0; }
+        .waste { height: 100%; background: repeating-linear-gradient(45deg, #fdfdfd, #fdfdfd 5px, #eeeeee 5px, #eeeeee 10px) !important; color: #999; font-size: 9px; display: flex; align-items: center; padding-left: 5px; flex-grow: 1; -webkit-print-color-adjust: exact; }
         
-        .summary { background: #e8f5e9; border-left: 4px solid #43a047; padding: 15px; border-radius: 4px; margin-bottom: 15px; display: none; -webkit-print-color-adjust: exact; }
-        .badge-stock { background: #fff3e0; color: #ef6c00; border: 1px solid #ffe0b2; padding: 2px 5px; border-radius: 3px; font-size: 9px; font-weight: bold; }
+        .summary { background: #e8f5e9; border-left: 5px solid #43a047; padding: 15px; border-radius: 5px; margin-bottom: 15px; display: none; }
+        .badge-stock { background: #fff3e0; color: #ef6c00; border: 1px solid #ffe0b2; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: bold; }
 
-        @media print {
-            .panel, .btn-add, .btn-del { display: none !important; }
-            body { background: white; padding: 0; }
-            .container { max-width: 100%; }
-            .bin-container { border: 1px solid #ddd; margin-bottom: 5px; }
-        }
-
-        /* Выравнивание всех кнопок и селектора в одну линию */
-        .actions { 
-            display: flex; 
-            gap: 10px; 
-            margin-top: 20px; 
-            align-items: flex-end; /* Чтобы кнопки были на одном уровне с селектором */
-            flex-wrap: wrap; /* Чтобы на маленьких экранах кнопки переносились, а не ломали верстку */
-        }
-
-        /* Настройка группы выбора вида отчета внутри строки действий */
-        .actions .input-group { 
-            margin-bottom: 0; 
-            flex: 1; /* Позволяет селектору занимать свободное место, если нужно */
-            min-width: 180px; 
-        }
-
-        /* Чтобы кнопки и селектор были одинаковой высоты */
-        .actions .btn, .actions select {
-            height: 38px;
-            box-sizing: border-box;
-        }
-
-        .actions select {
-            width: 100%;
-            padding: 0 10px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            background: white;
-            cursor: pointer;
-        }
-        .report-date {
-            font-size: 10px;
-            color: #888;
-            margin-bottom: 5px;
-        }
+        @media print { .panel, .btn-add, .btn-del, .no-print { display: none !important; } }
     </style>
 </head>
 <body>
 
 <div class="container">
     <div class="panel">
-        <h2>Настройки проекта</h2>
+        <h2>Параметры проекта</h2>
         <div class="settings-grid">
-            <div class="input-group"><label>Проект</label><input type="text" id="projectName" oninput="save()"></div>
-            <div class="input-group"><label>Хлыст (мм)</label><input type="number" id="stdStock" value="6000" oninput="save()"></div>
-            <div class="input-group"><label>Торц. (мм)</label><input type="number" id="trim" value="20" oninput="save()"></div>
+            <div class="input-group"><label>Название проекта</label><input type="text" id="projectName" oninput="save()"></div>
+            <div class="input-group"><label>Новый хлыст (мм)</label><input type="number" id="stdStock" value="6000" oninput="save()"></div>
+            <div class="input-group"><label>Торцовка (мм)</label><input type="number" id="trim" value="20" oninput="save()"></div>
             <div class="input-group"><label>Рез (мм)</label><input type="number" id="kerf" value="3" oninput="save()"></div>
             <div class="input-group"><label>Вес 1м (кг)</label><input type="number" id="weight" step="0.001" value="1.5" oninput="save()"></div>
-            <div class="input-group"><label>Профиль</label><input type="text" id="profileDesc" oninput="save()"></div>
-
+            <div class="input-group"><label>Описание профиля</label><input type="text" id="profileDesc" oninput="save()"></div>
         </div>
 
-        <div style="display: grid; grid-template-columns: 1fr 1.5fr; gap: 20px;">
+        <div style="display: grid; grid-template-columns: 1fr 1.4fr; gap: 20px;">
             <div>
                 <h2>Склад <button class="btn btn-add" onclick="addRow('stockContainer', false)">+ Добавить</button></h2>
                 <div id="stockContainer"></div>
@@ -158,18 +82,13 @@
                     <option value="detailed">Развернутый (таблицы)</option>
                 </select>
             </div>
-
             <button class="btn btn-calc" onclick="calculate()">Рассчитать</button>
-            
-            <button class="btn" style="background:#673ab7; color:white" onclick="saveToFile()">💾 Сохранить JSON</button>
-            
+            <button class="btn" style="background:#673ab7; color:white" onclick="saveToFile()">💾 JSON</button>
             <input type="file" id="fileInput" style="display:none" onchange="loadFromFile(event)" accept=".json">
-            <button class="btn" style="background:#ff9800; color:white" onclick="document.getElementById('fileInput').click()">📂 Открыть JSON</button>
-            
-            <button class="btn btn-print" onclick="window.print()">Печать</button>
+            <button class="btn" style="background:#ff9800; color:white" onclick="document.getElementById('fileInput').click()">📂 JSON</button>
+            <button class="btn" style="background:#607d8b; color:white" onclick="window.print()">Печать</button>
             <button class="btn" style="background:#ccc" onclick="clearAll()">Сброс</button>
         </div>
-
     </div>
 
     <div id="summary" class="summary"></div>
@@ -178,18 +97,25 @@
 </div>
 
 <script>
+const KEY = 'cutData_Final';
+
 function getColor(len) {
     const hue = (len * 137.5) % 360; 
     return `hsl(${hue}, 65%, 35%)`;
 }
 
-function addRow(containerId, isPart, val1='', val2='', val3='') {
+function addRow(containerId, isPart, val1='', val2='', val3='', val4=false) {
     const row = document.createElement('div');
     row.className = isPart ? 'items-row' : 'stock-row';
-    row.innerHTML = `
-        ${isPart ? `<input type="text" placeholder="Имя" class="val-name" value="${val1}" oninput="save()">` : ''}
-        <input type="number" placeholder="Длина" class="val-len" value="${isPart ? val2 : val1}" oninput="save()">
-        <input type="number" placeholder="Кол-во" class="val-qty" value="${isPart ? val3 : val2}" oninput="save()">
+    row.innerHTML = isPart ? `
+        <input type="text" placeholder="Имя" class="val-name" value="${val1}" oninput="save()">
+        <input type="number" placeholder="Длина" class="val-len" value="${val2}" oninput="save()">
+        <input type="number" placeholder="Кол-во" class="val-qty" value="${val3}" oninput="save()">
+        <button class="btn btn-del" onclick="this.parentElement.remove(); save();">✕</button>
+    ` : `
+        <input type="number" placeholder="Длина" class="val-len" value="${val1}" oninput="save()">
+        <input type="number" placeholder="Кол-во" class="val-qty" value="${val2}" oninput="save()">
+        <label style="font-size:9px;"><input type="checkbox" class="val-trim-extra" ${val4 ? 'checked' : ''} onchange="save()"> Торц.х2</label>
         <button class="btn btn-del" onclick="this.parentElement.remove(); save();">✕</button>
     `;
     document.getElementById(containerId).appendChild(row);
@@ -203,18 +129,19 @@ function save() {
         kerf: document.getElementById('kerf').value,
         weight: document.getElementById('weight').value,
         profileDesc: document.getElementById('profileDesc').value,
+        reportMode: document.getElementById('reportMode').value,
         stock: Array.from(document.querySelectorAll('#stockContainer .stock-row')).map(r => ({
-            len: r.querySelector('.val-len').value, qty: r.querySelector('.val-qty').value
+            len: r.querySelector('.val-len').value, qty: r.querySelector('.val-qty').value, extra: r.querySelector('.val-trim-extra').checked
         })),
         parts: Array.from(document.querySelectorAll('#partsContainer .items-row')).map(r => ({
             name: r.querySelector('.val-name').value, len: r.querySelector('.val-len').value, qty: r.querySelector('.val-qty').value
         }))
     };
-    localStorage.setItem('cutDataFull', JSON.stringify(data));
+    localStorage.setItem(KEY, JSON.stringify(data));
 }
 
 function load() {
-    const data = JSON.parse(localStorage.getItem('cutDataFull'));
+    const data = JSON.parse(localStorage.getItem(KEY));
     if (!data) { addRow('stockContainer', false, 3000, 1); addRow('partsContainer', true, 'Стойка', 2100, 2); return; }
     document.getElementById('projectName').value = data.projectName || '';
     document.getElementById('stdStock').value = data.stdStock || 6000;
@@ -222,23 +149,26 @@ function load() {
     document.getElementById('kerf').value = data.kerf || 3;
     document.getElementById('weight').value = data.weight || 1.5;
     document.getElementById('profileDesc').value = data.profileDesc || '';
-    data.stock.forEach(s => addRow('stockContainer', false, s.len, s.qty));
+    document.getElementById('reportMode').value = data.reportMode || 'compact';
+    document.getElementById('stockContainer').innerHTML = '';
+    document.getElementById('partsContainer').innerHTML = '';
+    data.stock.forEach(s => addRow('stockContainer', false, s.len, s.qty, '', s.extra));
     data.parts.forEach(p => addRow('partsContainer', true, p.name, p.len, p.qty));
 }
-
-function clearAll() { if(confirm('Очистить все данные?')) { localStorage.removeItem('cutDataFull'); location.reload(); } }
 
 function calculate() {
     const kerf = parseFloat(document.getElementById('kerf').value) || 0;
     const trim = parseFloat(document.getElementById('trim').value) || 0;
     const stdStockLen = parseFloat(document.getElementById('stdStock').value);
     const weightPerM = parseFloat(document.getElementById('weight').value) || 0;
+    const reportMode = document.getElementById('reportMode').value;
     
     let availableStock = [];
     document.querySelectorAll('#stockContainer .stock-row').forEach(row => {
         const len = parseFloat(row.querySelector('.val-len').value);
         const qty = parseInt(row.querySelector('.val-qty').value);
-        if (len > 0 && qty > 0) for(let i=0; i<qty; i++) availableStock.push({ max: len, current: [], isStock: true });
+        const extra = row.querySelector('.val-trim-extra').checked;
+        if (len > 0 && qty > 0) for(let i=0; i<qty; i++) availableStock.push({ max: len, current: [], isStock: true, forceDouble: extra });
     });
     availableStock.sort((a, b) => a.max - b.max);
 
@@ -258,186 +188,106 @@ function calculate() {
     partsFlat.forEach(p => {
         let placed = false;
         for (let bin of usedBins) {
-            let used = bin.current.reduce((s, x) => s + x.len, 0) + (bin.current.length * kerf) + (trim * 2);
+            let tMult = bin.isStock ? (bin.forceDouble ? 2 : 1) : 2;
+            let used = bin.current.reduce((s, x) => s + x.len, 0) + (bin.current.length * kerf) + (tMult * trim);
             if (used + p.len <= bin.max) { bin.current.push(p); placed = true; break; }
         }
         if (!placed) {
             for (let i = 0; i < availableStock.length; i++) {
-                if (p.len + (trim * 2) <= availableStock[i].max) {
-                    let bin = availableStock.splice(i, 1)[0]; bin.current.push(p); usedBins.push(bin); placed = true; break;
+                let tMult = availableStock[i].forceDouble ? 2 : 1;
+                if (p.len + (tMult * trim) <= availableStock[i].max) {
+                    let bin = availableStock.splice(i, 1)[0]; 
+                    bin.current.push(p); usedBins.push(bin); placed = true; break;
                 }
             }
         }
-        if (!placed) usedBins.push({ max: stdStockLen, current: [p], isStock: false });
+        if (!placed) {
+            if (p.len + (2 * trim) > stdStockLen) { alert("Деталь " + p.len + " не влезает!"); return; }
+            usedBins.push({ max: stdStockLen, current: [p], isStock: false });
+        }
     });
 
-    render(usedBins, kerf, trim, stdStockLen, weightPerM, partsGrouped);
+    render(usedBins, kerf, trim, stdStockLen, weightPerM, partsGrouped, reportMode);
 }
 
-function render(bins, kerf, trim, stdStockLen, weightPerM, partsGrouped) {
+function render(bins, kerf, trim, stdStockLen, weightPerM, partsGrouped, mode) {
     const results = document.getElementById('results');
     const summary = document.getElementById('summary');
-    const partsTableArea = document.getElementById('partsTableArea');
-    const reportMode = document.getElementById('reportMode').value;
-    
-    results.innerHTML = ''; 
-    let newCount = 0; let totalPartsLen = 0; let totalWeightInput = 0; let totalKerfLen = 0;
+    results.innerHTML = ''; let newCount = 0; let totalPartsLen = 0; let totalWeightInput = 0; let totalKerfLen = 0;
+    const now = new Date().toLocaleString('ru-RU');
 
-    // Генерируем дату
-    const now = new Date().toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-
-    // 1. Сводная ведомость (таблица)
     let tableHtml = `<table class="summary-table"><thead><tr><th>Имя</th><th>Длина</th><th>Кол-во</th><th>Вес шт</th><th>Всего</th></tr></thead><tbody>`;
     partsGrouped.forEach(p => {
+        totalPartsLen += (p.len * p.qty);
         tableHtml += `<tr><td>${p.name}</td><td>${p.len}</td><td>${p.qty} шт</td><td>${(p.len * weightPerM / 1000).toFixed(2)}</td><td>${(p.len * p.qty * weightPerM / 1000).toFixed(2)}</td></tr>`;
     });
-    partsTableArea.innerHTML = `<div class="report-date">Сформировано: ${now}</div><h3>Общая ведомость заготовок</h3>` + tableHtml + `</tbody></table>`;
+    document.getElementById('partsTableArea').innerHTML = `<div style="font-size:10px; color:#888">Сформировано: ${now}</div><h3>Сводная ведомость</h3>` + tableHtml + `</tbody></table>`;
 
-    // 2. Хлысты
     bins.forEach((bin, i) => {
         if (!bin.isStock) newCount++;
         const sumLen = bin.current.reduce((s, p) => s + p.len, 0);
-        totalPartsLen += sumLen;
         const kerfsInBin = bin.current.length > 1 ? (bin.current.length - 1) : 0;
         totalKerfLen += (kerfsInBin * kerf);
         totalWeightInput += (bin.max * weightPerM / 1000);
         
-        const waste = bin.max - (sumLen + kerfsInBin * kerf + (trim * 2));
+        let tMult = bin.isStock ? (bin.forceDouble ? 2 : 1) : 2;
+        const waste = bin.max - (sumLen + kerfsInBin * kerf + (tMult * trim));
 
-        const wrap = document.createElement('div');
-        wrap.className = 'bin-container';
-        
-        // Рендер таблиц для развернутого вида
         let detailedTable = '';
-        if (reportMode === 'detailed') {
-            let binPartsMap = {};
-            bin.current.forEach(p => { let k = `${p.name}||${p.len}`; binPartsMap[k] = (binPartsMap[k] || 0) + 1; });
-            detailedTable = `<table style="width:100%; margin-top:8px; font-size:11px; border-top:1px dashed #ccc;"><tr><td>Деталь</td><td>Длина</td><td>Кол-во</td><td>Вес (кг)</td></tr>`;
-            for (let key in binPartsMap) {
-                let [name, len] = key.split('||'); let qty = binPartsMap[key];
-                detailedTable += `<tr><td><b>${name}</b></td><td>${len} мм</td><td>${qty} шт</td><td>${(len * qty * weightPerM / 1000).toFixed(2)}</td></tr>`;
+        if (mode === 'detailed') {
+            let binMap = {};
+            bin.current.forEach(p => { let k = `${p.name}||${p.len}`; binMap[k] = (binMap[k] || 0) + 1; });
+            detailedTable = `<table style="width:100%; margin-top:5px; font-size:11px; border-top:1px dashed #ccc;">`;
+            for (let k in binMap) {
+                let [n, l] = k.split('||');
+                detailedTable += `<tr><td><b>${n}</b></td><td>${l} мм</td><td>${binMap[k]} шт</td><td>${(l * binMap[k] * weightPerM / 1000).toFixed(2)} кг</td></tr>`;
             }
             detailedTable += `</table>`;
         }
 
+        const wrap = document.createElement('div');
+        wrap.className = 'bin-container';
         wrap.innerHTML = `
             <div class="bin-info">
-                <span>
-                    №${i+1} (${bin.max} мм) ${bin.isStock ? '<span class="badge-stock">СКЛАД</span>' : '<b>НОВЫЙ</b>'} 
-                    | ${(bin.max * weightPerM / 1000).toFixed(2)} кг 
-                    <span style="color:#d32f2f; margin-left:10px;">(Торцевать: ${trim} мм)</span>
-                </span>
+                <span>№${i+1} (${bin.max} мм) ${bin.isStock ? '<span class="badge-stock">СКЛАД</span>' : '<b>НОВЫЙ</b>'} | ${(bin.max * weightPerM / 1000).toFixed(2)} кг <span style="color:#d32f2f; margin-left:10px;">(Торцовка: ${tMult}x${trim})</span></span>
                 <span>Остаток: <b>${waste.toFixed(0)} мм</b></span>
             </div>
             <div class="bin-bar" style="width: ${(bin.max / stdStockLen * 100)}%">
-                <div class="trim" style="width: ${(trim / bin.max * 100)}%"></div>
+                ${(tMult === 2) ? `<div class="trim" style="width: ${(trim / bin.max * 100)}%"></div>` : ''}
                 ${bin.current.map((p, idx) => `
-                    <div class="part" style="width: ${(p.len / bin.max * 100)}%; background: ${getColor(p.len)}">
-                        ${p.len}<span>${p.name}</span>
-                    </div>
+                    <div class="part" style="width: ${(p.len / bin.max * 100)}%; background: ${getColor(p.len)}">${p.len}<span>${p.name}</span></div>
                     ${idx < bin.current.length - 1 ? `<div class="kerf" style="width: ${(kerf / bin.max * 100)}%"></div>` : ''}
                 `).join('')}
                 <div class="waste">${waste > 15 ? Math.floor(waste) : ''}</div>
                 <div class="trim" style="width: ${(trim / bin.max * 100)}%"></div>
-            </div>
-            ${detailedTable}`;
+                
+            </div>${detailedTable}`;
         results.appendChild(wrap);
     });
 
-    // 3. Итоги
-    const cleanW = (totalPartsLen * weightPerM / 1000).toFixed(2);
-    const shavingsW = (totalKerfLen * weightPerM / 1000).toFixed(2);
-    const scrapW = (totalWeightInput - cleanW - shavingsW).toFixed(2);
-
+    const cleanW = (totalPartsLen * weightPerM / 1000).toFixed(2); // Вес всех заготовок
+    const shavingsW = (totalKerfLen * weightPerM / 1000).toFixed(2); // Вес пыли от пилы
+    const totalW = totalWeightInput.toFixed(2); // Общий вес закупки + склада
+    const scrapW = (totalWeightInput - cleanW - shavingsW).toFixed(2); // Вес твердых остатков
     summary.style.display = 'block';
     summary.innerHTML = `
         <div style="display:grid; grid-template-columns: 1fr 1fr; gap:20px;">
             <div>
-                <h1 style="margin:0; font-size:1.4rem">${document.getElementById('projectName').value || 'Новый проект'}</h1>
-                <p style="margin:5px 0 0 0; color:#444; font-size:1.1rem;">Профиль: <b>${document.getElementById('profileDesc').value || '—'}</b></p>
-                <p style="margin:5px 0 0 0;">Закупка: <b>${newCount} шт.</b> (${(newCount * stdStockLen / 1000).toFixed(2)} м)</p>
+                <h1 style="margin:0; font-size:1.3rem">${document.getElementById('projectName').value || 'Проект без названия'}</h1>
+                <p style="margin:5px 0 0 0; color:#444;">Профиль: <b>${document.getElementById('profileDesc').value || '—'}</b></p>
+                <p style="margin:5px 0 0 0;">Новых хлыстов: <b>${newCount} шт.</b> (${(newCount * stdStockLen / 1000).toFixed(2)} м)</p>
             </div>
             <div style="text-align:right; font-size: 0.95rem; line-height: 1.6;">
-                Вес материала: <b>${totalWeightInput.toFixed(2)} кг</b><br>
-                Вес деталей: <b>${cleanW} кг</b><br>
-                Стружка : ${shavingsW} кг | Обрезки: ${scrapW} кг
+                Общий вес материала: <b>${totalW} кг</b><br>
+                Чистый вес деталей: <b style="color:#2e7d32">${cleanW} кг</b><br>
+                Стружка: ${shavingsW} кг | Обрезки: ${scrapW} кг
             </div>
         </div>`;
 }
 
-// Единый ключ для всех операций
-const STORAGE_KEY = 'cutDataV2026';
-
-function save() {
-    const data = {
-        projectName: document.getElementById('projectName').value,
-        stdStock: document.getElementById('stdStock').value,
-        trim: document.getElementById('trim').value,
-        kerf: document.getElementById('kerf').value,
-        weight: document.getElementById('weight').value,
-        profileDesc: document.getElementById('profileDesc').value,
-        stock: Array.from(document.querySelectorAll('#stockContainer .stock-row')).map(r => ({
-            len: r.querySelector('.val-len').value, qty: r.querySelector('.val-qty').value
-        })),
-        parts: Array.from(document.querySelectorAll('#partsContainer .items-row')).map(r => ({
-            name: r.querySelector('.val-name').value, len: r.querySelector('.val-len').value, qty: r.querySelector('.val-qty').value
-        }))
-    };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-}
-
-function load() {
-    const data = JSON.parse(localStorage.getItem(STORAGE_KEY));
-    if (!data) { 
-        addRow('stockContainer', false, 3000, 1); 
-        addRow('partsContainer', true, 'Стойка', 2100, 2); 
-        return; 
-    }
-    
-    // Очищаем контейнеры перед загрузкой, чтобы не дублировать
-    document.getElementById('stockContainer').innerHTML = '';
-    document.getElementById('partsContainer').innerHTML = '';
-
-    document.getElementById('projectName').value = data.projectName || '';
-    document.getElementById('stdStock').value = data.stdStock || 6000;
-    document.getElementById('trim').value = data.trim || 20;
-    document.getElementById('kerf').value = data.kerf || 3;
-    document.getElementById('weight').value = data.weight || 1.5;
-    document.getElementById('profileDesc').value = data.profileDesc || '';
-    
-    if(data.stock) data.stock.forEach(s => addRow('stockContainer', false, s.len, s.qty));
-    if(data.parts) data.parts.forEach(p => addRow('partsContainer', true, p.name, p.len, p.qty));
-}
-
-function saveToFile() {
-    save(); // Сначала обновляем localStorage актуальными данными из полей
-    const data = localStorage.getItem(STORAGE_KEY);
-    const blob = new Blob([data], { type: "application/json" });
-    const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob);
-    link.download = (document.getElementById('projectName').value || "project") + ".json";
-    link.click();
-}
-
-function loadFromFile(event) {
-    const file = event.target.files[0]; // Исправлено: добавил [0]
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = function(e) {
-        try {
-            const content = e.target.result;
-            JSON.parse(content); // Проверка на валидность JSON
-            localStorage.setItem(STORAGE_KEY, content);
-            location.reload(); // Перезагрузка применит новые данные через load()
-        } catch (err) {
-            alert("Ошибка: файл поврежден или имеет неверный формат!");
-        }
-    };
-    reader.readAsText(file);
-}
-
-
+function saveToFile() { save(); const blob = new Blob([localStorage.getItem(KEY)], {type:"application/json"}); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = (document.getElementById('projectName').value || "project") + ".json"; a.click(); }
+function loadFromFile(e) { const reader = new FileReader(); reader.onload = (ev) => { localStorage.setItem(KEY, ev.target.result); location.reload(); }; reader.readAsText(e.target.files[0]); }
+function clearAll() { if(confirm('Сбросить?')) { localStorage.removeItem(KEY); location.reload(); } }
 window.onload = load;
 </script>
 </body>
