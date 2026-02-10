@@ -43,8 +43,15 @@
             -webkit-print-color-adjust: exact; print-color-adjust: exact; 
         }
         .part span { font-size: 7px; opacity: 0.95; font-weight: normal; margin-top: -1px; white-space: nowrap; }
-
-        .trim { height: 100%; background: #90a4ae !important; opacity: 0.4; -webkit-print-color-adjust: exact; }
+        .trim { 
+            height: 100%; 
+            background: #ff0000 !important; 
+            flex-shrink: 0;
+            -webkit-print-color-adjust: exact; 
+            print-color-adjust: exact; 
+            border-left: 1px solid rgba(0,0,0,0.1);
+            border-right: 1px solid rgba(0,0,0,0.1);
+        }
         .kerf { height: 100%; background: #333 !important; -webkit-print-color-adjust: exact; }
         .waste { 
             height: 100%; 
@@ -110,7 +117,11 @@
             background: white;
             cursor: pointer;
         }
-
+        .report-date {
+            font-size: 10px;
+            color: #888;
+            margin-bottom: 5px;
+        }
     </style>
 </head>
 <body>
@@ -272,14 +283,17 @@ function render(bins, kerf, trim, stdStockLen, weightPerM, partsGrouped) {
     results.innerHTML = ''; 
     let newCount = 0; let totalPartsLen = 0; let totalWeightInput = 0; let totalKerfLen = 0;
 
-    // 1. Общая ведомость заготовок (в начале)
+    // Генерируем дату
+    const now = new Date().toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+    // 1. Сводная ведомость (таблица)
     let tableHtml = `<table class="summary-table"><thead><tr><th>Имя</th><th>Длина</th><th>Кол-во</th><th>Вес шт</th><th>Всего</th></tr></thead><tbody>`;
     partsGrouped.forEach(p => {
         tableHtml += `<tr><td>${p.name}</td><td>${p.len}</td><td>${p.qty} шт</td><td>${(p.len * weightPerM / 1000).toFixed(2)}</td><td>${(p.len * p.qty * weightPerM / 1000).toFixed(2)}</td></tr>`;
     });
-    partsTableArea.innerHTML = `<h3>Общая ведомость заготовок</h3>` + tableHtml + `</tbody></table>`;
+    partsTableArea.innerHTML = `<div class="report-date">Сформировано: ${now}</div><h3>Общая ведомость заготовок</h3>` + tableHtml + `</tbody></table>`;
 
-    // 2. Отрисовка хлыстов
+    // 2. Хлысты
     bins.forEach((bin, i) => {
         if (!bin.isStock) newCount++;
         const sumLen = bin.current.reduce((s, p) => s + p.len, 0);
@@ -293,20 +307,14 @@ function render(bins, kerf, trim, stdStockLen, weightPerM, partsGrouped) {
         const wrap = document.createElement('div');
         wrap.className = 'bin-container';
         
-        // Группировка деталей внутри хлыста для таблицы
-        let binPartsMap = {};
-        bin.current.forEach(p => {
-            let key = `${p.name}||${p.len}`;
-            binPartsMap[key] = (binPartsMap[key] || 0) + 1;
-        });
-
+        // Рендер таблиц для развернутого вида
         let detailedTable = '';
         if (reportMode === 'detailed') {
-            detailedTable = `<table style="width:100%; margin-top:8px; font-size:11px; border-top:1px dashed #ccc;">
-                <tr style="color:#777"><td>Деталь</td><td>Длина</td><td>Кол-во</td><td>Вес (кг)</td></tr>`;
+            let binPartsMap = {};
+            bin.current.forEach(p => { let k = `${p.name}||${p.len}`; binPartsMap[k] = (binPartsMap[k] || 0) + 1; });
+            detailedTable = `<table style="width:100%; margin-top:8px; font-size:11px; border-top:1px dashed #ccc;"><tr><td>Деталь</td><td>Длина</td><td>Кол-во</td><td>Вес (кг)</td></tr>`;
             for (let key in binPartsMap) {
-                let [name, len] = key.split('||');
-                let qty = binPartsMap[key];
+                let [name, len] = key.split('||'); let qty = binPartsMap[key];
                 detailedTable += `<tr><td><b>${name}</b></td><td>${len} мм</td><td>${qty} шт</td><td>${(len * qty * weightPerM / 1000).toFixed(2)}</td></tr>`;
             }
             detailedTable += `</table>`;
@@ -314,7 +322,11 @@ function render(bins, kerf, trim, stdStockLen, weightPerM, partsGrouped) {
 
         wrap.innerHTML = `
             <div class="bin-info">
-                <span>№${i+1} (${bin.max} мм) ${bin.isStock ? '<span class="badge-stock">СКЛАД</span>' : '<b>НОВЫЙ</b>'} | ${(bin.max * weightPerM / 1000).toFixed(2)} кг</span>
+                <span>
+                    №${i+1} (${bin.max} мм) ${bin.isStock ? '<span class="badge-stock">СКЛАД</span>' : '<b>НОВЫЙ</b>'} 
+                    | ${(bin.max * weightPerM / 1000).toFixed(2)} кг 
+                    <span style="color:#d32f2f; margin-left:10px;">(Торцевать: ${trim} мм)</span>
+                </span>
                 <span>Остаток: <b>${waste.toFixed(0)} мм</b></span>
             </div>
             <div class="bin-bar" style="width: ${(bin.max / stdStockLen * 100)}%">
@@ -332,7 +344,7 @@ function render(bins, kerf, trim, stdStockLen, weightPerM, partsGrouped) {
         results.appendChild(wrap);
     });
 
-    // 3. Итоговая сводка весов
+    // 3. Итоги
     const cleanW = (totalPartsLen * weightPerM / 1000).toFixed(2);
     const shavingsW = (totalKerfLen * weightPerM / 1000).toFixed(2);
     const scrapW = (totalWeightInput - cleanW - shavingsW).toFixed(2);
@@ -341,16 +353,17 @@ function render(bins, kerf, trim, stdStockLen, weightPerM, partsGrouped) {
     summary.innerHTML = `
         <div style="display:grid; grid-template-columns: 1fr 1fr; gap:20px;">
             <div>
-                <b style="font-size:16px;">Проект: ${document.getElementById('projectName').value || 'Без имени'}</b><br>
-                Купить: <b>${newCount} шт.</b> (${(newCount * stdStockLen / 1000).toFixed(2)} м)
+                <h1 style="margin:0; font-size:1.4rem">${document.getElementById('projectName').value || 'Новый проект'}</h1>
+                <p style="margin:5px 0 0 0; color:#444; font-size:1.1rem;">Профиль: <b>${document.getElementById('profileDesc').value || '—'}</b></p>
+                <p style="margin:5px 0 0 0;">Закупка: <b>${newCount} шт.</b> (${(newCount * stdStockLen / 1000).toFixed(2)} м)</p>
             </div>
-            <div style="text-align:right">
-                Общий вес: <b>${totalWeightInput.toFixed(2)} кг</b> | Вес деталей: <b>${cleanW} кг</b></b><br>
-                Обрезки: ${scrapW} кг | Стружка: ${shavingsW} кг
+            <div style="text-align:right; font-size: 0.95rem; line-height: 1.6;">
+                Вес материала: <b>${totalWeightInput.toFixed(2)} кг</b><br>
+                Вес деталей: <b>${cleanW} кг</b><br>
+                Стружка : ${shavingsW} кг | Обрезки: ${scrapW} кг
             </div>
         </div>`;
 }
-
 
 // Единый ключ для всех операций
 const STORAGE_KEY = 'cutDataV2026';
