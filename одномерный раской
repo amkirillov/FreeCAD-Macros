@@ -46,10 +46,94 @@
         .summary { background: #e8f5e9; border-left: 5px solid #43a047; padding: 15px; border-radius: 5px; margin-bottom: 15px; display: none; }
         .badge-stock { background: #fff3e0; color: #ef6c00; border: 1px solid #ffe0b2; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: bold; }
 
+        /* Кнопка открытия справа */
+        .json-toggle {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 2000; /* всегда выше панели */
+            background: #37474f;
+            color: white;
+            border: none;
+            padding: 8px 14px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+        }
+
+        /* Выезжающая панель справа */
+        .json-panel {
+            position: fixed;
+            top: 0;
+            right: -360px; /* спрятана */
+            width: 340px;
+            height: 100vh;
+            background: #ffffff;
+            box-shadow: -2px 0 8px rgba(0,0,0,0.25);
+            padding: 15px;
+            display: flex;
+            flex-direction: column;
+            transition: right 0.3s ease;
+            z-index: 1500; /* ниже кнопки */
+            overflow: hidden;
+        }
+
+        .json-panel.open {
+            right: 0;
+        }
+
+        /* Внутренний скролл */
+        .json-panel-content {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            overflow-y: auto;
+            height: 100%;
+            padding-right: 5px;
+        }
+
+        /* Заголовки */
+        .json-panel h3 {
+            margin: 0;
+            font-size: 14px;
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 5px;
+        }
+
+        /* Поля */
+        .json-panel textarea {
+            width: 100%;
+            height: 200px;
+            resize: none;
+            font-size: 12px;
+            font-family: monospace;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            padding: 6px;
+            background: #fafafa;
+        }
+
+        /* Кнопки */
+        .json-panel .btn-small {
+            padding: 6px 10px;
+            font-size: 11px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            background: #607d8b;
+            color: white;
+        }
+
+        .json-close {
+            background: #d32f2f !important;
+        }
+
         @media print { .panel, .btn-add, .btn-del, .no-print { display: none !important; } }
     </style>
 </head>
 <body>
+<button id="jsonToggle" class="json-toggle no-print">JSON</button>
 
 <div class="container">
     <div class="panel">
@@ -94,6 +178,20 @@
     <div id="summary" class="summary"></div>
     <div id="partsTableArea"></div>
     <div id="results"></div>
+    
+</div>
+<div id="jsonPanel" class="json-panel no-print">
+    <div class="json-panel-content">
+        <h3>JSON вывод</h3>
+        <textarea id="jsonOutput" readonly></textarea>
+        <button class="btn-small" onclick="copyJSON()">Копировать JSON</button>
+
+        <h3>JSON ввод</h3>
+        <textarea id="jsonInput"></textarea>
+        <button class="btn-small" onclick="applyJSON()">Загрузить из ввода</button>
+
+        <button class="btn-small json-close" onclick="toggleJSON()">Закрыть</button>
+    </div>
 </div>
 
 <script>
@@ -208,6 +306,7 @@ function calculate() {
     });
 
     render(usedBins, kerf, trim, stdStockLen, weightPerM, partsGrouped, reportMode);
+    updateJSONPanel();
 }
 
 function render(bins, kerf, trim, stdStockLen, weightPerM, partsGrouped, mode) {
@@ -289,6 +388,38 @@ function saveToFile() { save(); const blob = new Blob([localStorage.getItem(KEY)
 function loadFromFile(e) { const reader = new FileReader(); reader.onload = (ev) => { localStorage.setItem(KEY, ev.target.result); location.reload(); }; reader.readAsText(e.target.files[0]); }
 function clearAll() { if(confirm('Сбросить?')) { localStorage.removeItem(KEY); location.reload(); } }
 window.onload = load;
+
+function toggleJSON() {
+    document.getElementById("jsonPanel").classList.toggle("open");
+}
+
+document.getElementById("jsonToggle").onclick = toggleJSON;
+
+function updateJSONPanel() {
+    const data = JSON.parse(localStorage.getItem(KEY) || "{}");
+    document.getElementById("jsonOutput").value = JSON.stringify(data, null, 2);
+}
+
+function copyJSON() {
+    const ta = document.getElementById("jsonOutput");
+    ta.select();
+    document.execCommand("copy");
+}
+
+function applyJSON() {
+    try {
+        const text = document.getElementById("jsonInput").value.trim();
+        if (!text) return alert("Поле ввода пустое");
+
+        const obj = JSON.parse(text);
+        localStorage.setItem(KEY, JSON.stringify(obj));
+        location.reload();
+    } catch (e) {
+        alert("Ошибка JSON: " + e.message);
+    }
+}
+
 </script>
+
 </body>
 </html>
