@@ -10,7 +10,13 @@
         h2 { margin: 0 0 10px 0; color: #2c3e50; border-bottom: 2px solid #eee; font-size: 1rem; display: flex; justify-content: space-between; align-items: center;}
         
         /* Сетка настроек */
-        .settings-grid { display: grid; grid-template-columns: 1.5fr 100px 80px 80px 90px 1.5fr; gap: 10px; margin-bottom: 15px; }
+        .settings-grid { 
+            display: grid; 
+            /* Делаем 4 колонки, они автоматически перенесутся на 2 строки */
+            grid-template-columns: repeat(4, 1fr); 
+            gap: 12px; 
+            margin-bottom: 20px; 
+        }
         .input-group { display: flex; flex-direction: column; }
         label { font-size: 9px; font-weight: bold; margin-bottom: 3px; color: #777; text-transform: uppercase; }
         input, select { padding: 7px 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px; background: white; }
@@ -144,7 +150,9 @@
             <div class="input-group"><label>Торцовка (мм)</label><input type="number" id="trim" value="20" oninput="save()"></div>
             <div class="input-group"><label>Рез (мм)</label><input type="number" id="kerf" value="3" oninput="save()"></div>
             <div class="input-group"><label>Вес 1м (кг)</label><input type="number" id="weight" step="0.001" value="1.5" oninput="save()"></div>
+            <div class="input-group"><label>Время реза (сек)</label><input type="number" id="cutTime" value="30" oninput="save()"></div>
             <div class="input-group"><label>Описание профиля</label><input type="text" id="profileDesc" oninput="save()"></div>
+            <div class="input-group"><label>Версия</label><div style="font-size: 11px; color: #999; padding-top: 8px;">PRO v.2.6</div></div>
         </div>
 
         <div style="display: grid; grid-template-columns: 1fr 1.4fr; gap: 20px;">
@@ -226,6 +234,7 @@ function save() {
         trim: document.getElementById('trim').value,
         kerf: document.getElementById('kerf').value,
         weight: document.getElementById('weight').value,
+        cutTime: document.getElementById('cutTime').value,
         profileDesc: document.getElementById('profileDesc').value,
         reportMode: document.getElementById('reportMode').value,
         stock: Array.from(document.querySelectorAll('#stockContainer .stock-row')).map(r => ({
@@ -246,12 +255,14 @@ function load() {
     document.getElementById('trim').value = data.trim || 20;
     document.getElementById('kerf').value = data.kerf || 3;
     document.getElementById('weight').value = data.weight || 1.5;
+    document.getElementById('cutTime').value = data.cutTime || 0;
     document.getElementById('profileDesc').value = data.profileDesc || '';
     document.getElementById('reportMode').value = data.reportMode || 'compact';
     document.getElementById('stockContainer').innerHTML = '';
     document.getElementById('partsContainer').innerHTML = '';
     data.stock.forEach(s => addRow('stockContainer', false, s.len, s.qty, '', s.extra));
     data.parts.forEach(p => addRow('partsContainer', true, p.name, p.len, p.qty));
+    calculate();
 }
 
 function calculate() {
@@ -261,6 +272,7 @@ function calculate() {
     const weightPerM = parseFloat(document.getElementById('weight').value) || 0;
     const reportMode = document.getElementById('reportMode').value;
     
+    // --- СБОР ДАННЫХ (оставляем как было) ---
     let availableStock = [];
     document.querySelectorAll('#stockContainer .stock-row').forEach(row => {
         const len = parseFloat(row.querySelector('.val-len').value);
@@ -282,54 +294,167 @@ function calculate() {
     partsGrouped.forEach(p => { for(let i=0; i<p.qty; i++) partsFlat.push({ name: p.name, len: p.len }); });
     partsFlat.sort((a, b) => b.len - a.len);
 
+    // --- ЭТАП 1: БАЗОВЫЙ РАСКЛАД (BEST FIT) ---
     const usedBins = [];
     partsFlat.forEach(p => {
-        let placed = false;
-        for (let bin of usedBins) {
+        let bestBinIdx = -1;
+        let minRem = Infinity;
+
+        for (let i = 0; i < usedBins.length; i++) {
+            let bin = usedBins[i];
             let tMult = bin.isStock ? (bin.forceDouble ? 2 : 1) : 2;
             let used = bin.current.reduce((s, x) => s + x.len, 0) + (bin.current.length * kerf) + (tMult * trim);
-            if (used + p.len <= bin.max) { bin.current.push(p); placed = true; break; }
+            let rem = bin.max - (used + p.len);
+            if (rem >= 0 && rem < minRem) { minRem = rem; bestBinIdx = i; }
         }
-        if (!placed) {
+
+        if (bestBinIdx !== -1) {
+            usedBins[bestBinIdx].current.push(p);
+        } else {
+            let bestStockIdx = -1;
+            let minStockRem = Infinity;
             for (let i = 0; i < availableStock.length; i++) {
-                let tMult = availableStock[i].forceDouble ? 2 : 1;
-                if (p.len + (tMult * trim) <= availableStock[i].max) {
-                    let bin = availableStock.splice(i, 1)[0]; 
-                    bin.current.push(p); usedBins.push(bin); placed = true; break;
-                }
+                let sBin = availableStock[i];
+                let tMult = sBin.forceDouble ? 2 : 1;
+                let rem = sBin.max - (p.len + (tMult * trim));
+                if (rem >= 0 && rem < minStockRem) { minStockRem = rem; bestStockIdx = i; }
+            }
+            if (bestStockIdx !== -1) {
+                let bin = availableStock.splice(bestStockIdx, 1)[0];
+                bin.current.push(p);
+                usedBins.push(bin);
+            } else {
+                if (p.len + (2 * trim) > stdStockLen) { alert("Деталь " + p.name + " не влезает!"); return; }
+                usedBins.push({ max: stdStockLen, current: [p], isStock: false, forceDouble: false });
             }
         }
-        if (!placed) {
-            if (p.len + (2 * trim) > stdStockLen) { alert("Деталь " + p.len + " не влезает!"); return; }
-            usedBins.push({ max: stdStockLen, current: [p], isStock: false });
-        }
     });
+
+    // --- ЭТАП 2: ОПТИМИЗАЦИЯ (ПЕРЕБОР) ---
+    // Пробуем 1000 раз случайно поменять детали местами, чтобы уплотнить хлысты
+    for (let s = 0; s < 1000; s++) {
+        let idx1 = Math.floor(Math.random() * usedBins.length);
+        let idx2 = Math.floor(Math.random() * usedBins.length);
+        if (idx1 === idx2) continue;
+
+        let b1 = usedBins[idx1];
+        let b2 = usedBins[idx2];
+        
+        let pIdx1 = Math.floor(Math.random() * b1.current.length);
+        let pIdx2 = Math.floor(Math.random() * b2.current.length);
+
+        let p1 = b1.current[pIdx1];
+        let p2 = b2.current[pIdx2];
+
+        // Проверяем, влезет ли замена в оба хлыста
+        if (checkFit([...b1.current.filter((_,i)=>i!==pIdx1), p2], b1, kerf, trim) && 
+            checkFit([...b2.current.filter((_,i)=>i!==pIdx2), p1], b2, kerf, trim)) {
+            
+            // Считаем "плотность" (сумма квадратов длин)
+            let qBefore = Math.pow(getLen(b1.current), 2) + Math.pow(getLen(b2.current), 2);
+            let qAfter = Math.pow(getLen([...b1.current.filter((_,i)=>i!==pIdx1), p2]), 2) + 
+                         Math.pow(getLen([...b2.current.filter((_,i)=>i!==pIdx2), p1]), 2);
+
+            if (qAfter > qBefore) {
+                b1.current[pIdx1] = p2;
+                b2.current[pIdx2] = p1;
+            }
+        }
+    }
+
+    // --- ЭТАП 3: СХЛОПЫВАНИЕ (УДАЛЕНИЕ ПУСТЫХ) ---
+    for (let i = usedBins.length - 1; i > 0; i--) {
+        for (let j = 0; j < i; j++) {
+            if (checkFit([...usedBins[j].current, ...usedBins[i].current], usedBins[j], kerf, trim)) {
+                usedBins[j].current.push(...usedBins[i].current);
+                usedBins.splice(i, 1);
+                break;
+            }
+        }
+    }
 
     render(usedBins, kerf, trim, stdStockLen, weightPerM, partsGrouped, reportMode);
     updateJSONPanel();
 }
 
+// Вспомогательные функции (положи их ВНЕ calculate)
+function checkFit(parts, bin, kerf, trim) {
+    if (parts.length === 0) return true;
+    let tMult = bin.isStock ? (bin.forceDouble ? 2 : 1) : 2;
+    let total = parts.reduce((s, p) => s + p.len, 0) + (parts.length - 1) * kerf + (tMult * trim);
+    return total <= bin.max;
+}
+
+function getLen(parts) {
+    return parts.reduce((s, p) => s + p.len, 0);
+}
+
 function render(bins, kerf, trim, stdStockLen, weightPerM, partsGrouped, mode) {
     const results = document.getElementById('results');
     const summary = document.getElementById('summary');
-    results.innerHTML = ''; let newCount = 0; let totalPartsLen = 0; let totalWeightInput = 0; let totalKerfLen = 0;
+    const partsTableArea = document.getElementById('partsTableArea');
+    
+    results.innerHTML = ''; 
+    let newCount = 0; 
+    let totalPartsLen = 0; 
+    let totalWeightInput = 0; 
+    let totalKerfLen = 0;
+    let totalCutsCount = 0; // Для расчета времени
+    
     const now = new Date().toLocaleString('ru-RU');
+    const cutTimePerOne = parseFloat(document.getElementById('cutTime')?.value) || 0; // Время на 1 рез
 
-    let tableHtml = `<table class="summary-table"><thead><tr><th>Имя</th><th>Длина</th><th>Кол-во</th><th>Вес шт</th><th>Всего</th></tr></thead><tbody>`;
+    // --- Создаем карту цветов ---
+    const colorMap = {};
     partsGrouped.forEach(p => {
-        totalPartsLen += (p.len * p.qty);
-        tableHtml += `<tr><td>${p.name}</td><td>${p.len}</td><td>${p.qty} шт</td><td>${(p.len * weightPerM / 1000).toFixed(2)}</td><td>${(p.len * p.qty * weightPerM / 1000).toFixed(2)}</td></tr>`;
+        const key = `${p.name}||${p.len}`;
+        colorMap[key] = getColor(p.len + p.name.length);
     });
-    document.getElementById('partsTableArea').innerHTML = `<div style="font-size:10px; color:#888">Сформировано: ${now}</div><h3>Сводная ведомость</h3>` + tableHtml + `</tbody></table>`;
 
+    // --- Сводная ведомость заготовок ---
+    let tableHtml = `<table class="summary-table">
+        <thead>
+            <tr>
+                <th style="width:30px">Цвет</th>
+                <th>Имя</th>
+                <th>Длина</th>
+                <th>Кол-во</th>
+                <th>Вес шт</th>
+                <th>Всего</th>
+            </tr>
+        </thead>
+        <tbody>`;
+        
+    partsGrouped.forEach(p => {
+        const key = `${p.name}||${p.len}`;
+        const rowColor = colorMap[key];
+        totalPartsLen += (p.len * p.qty);
+        tableHtml += `
+            <tr>
+                <td style="background:${rowColor}; border-radius:3px; width:30px;"></td>
+                <td><b>${p.name}</b></td>
+                <td>${p.len} мм</td>
+                <td>${p.qty} шт</td>
+                <td>${(p.len * weightPerM / 1000).toFixed(2)} кг</td>
+                <td>${(p.len * p.qty * weightPerM / 1000).toFixed(2)} кг</td>
+            </tr>`;
+    });
+    document.getElementById('partsTableArea').innerHTML = `
+        <div style="font-size:10px; color:#888">Сформировано: ${now}</div>
+        <h3>Сводная ведомость заготовок</h3>` + tableHtml + `</tbody></table>`;
+
+    // --- Отрисовка хлыстов ---
     bins.forEach((bin, i) => {
         if (!bin.isStock) newCount++;
         const sumLen = bin.current.reduce((s, p) => s + p.len, 0);
         const kerfsInBin = bin.current.length > 1 ? (bin.current.length - 1) : 0;
-        totalKerfLen += (kerfsInBin * kerf);
-        totalWeightInput += (bin.max * weightPerM / 1000);
         
         let tMult = bin.isStock ? (bin.forceDouble ? 2 : 1) : 2;
+        
+        totalKerfLen += (kerfsInBin * kerf);
+        totalWeightInput += (bin.max * weightPerM / 1000);
+        totalCutsCount += (kerfsInBin + tMult); // Резы деталей + торцовки
+
         const waste = bin.max - (sumLen + kerfsInBin * kerf + (tMult * trim));
 
         let detailedTable = '';
@@ -339,7 +464,13 @@ function render(bins, kerf, trim, stdStockLen, weightPerM, partsGrouped, mode) {
             detailedTable = `<table style="width:100%; margin-top:5px; font-size:11px; border-top:1px dashed #ccc;">`;
             for (let k in binMap) {
                 let [n, l] = k.split('||');
-                detailedTable += `<tr><td><b>${n}</b></td><td>${l} мм</td><td>${binMap[k]} шт</td><td>${(l * binMap[k] * weightPerM / 1000).toFixed(2)} кг</td></tr>`;
+                detailedTable += `<tr>
+                    <td style="width:10px; background:${colorMap[k]}"></td>
+                    <td><b>${n}</b></td>
+                    <td>${l} мм</td>
+                    <td>${binMap[k]} шт</td>
+                    <td>${(l * binMap[k] * weightPerM / 1000).toFixed(2)} кг</td>
+                </tr>`;
             }
             detailedTable += `</table>`;
         }
@@ -354,35 +485,77 @@ function render(bins, kerf, trim, stdStockLen, weightPerM, partsGrouped, mode) {
             <div class="bin-bar" style="width: ${(bin.max / stdStockLen * 100)}%">
                 ${(tMult === 2) ? `<div class="trim" style="width: ${(trim / bin.max * 100)}%"></div>` : ''}
                 ${bin.current.map((p, idx) => `
-                    <div class="part" style="width: ${(p.len / bin.max * 100)}%; background: ${getColor(p.len)}">${p.len}<span>${p.name}</span></div>
+                    <div class="part" style="width: ${(p.len / bin.max * 100)}%; background: ${colorMap[p.name+'||'+p.len]}">
+                        ${p.len}<span>${p.name}</span>
+                    </div>
                     ${idx < bin.current.length - 1 ? `<div class="kerf" style="width: ${(kerf / bin.max * 100)}%"></div>` : ''}
                 `).join('')}
                 <div class="waste">${waste > 15 ? Math.floor(waste) : ''}</div>
                 <div class="trim" style="width: ${(trim / bin.max * 100)}%"></div>
-                
             </div>${detailedTable}`;
         results.appendChild(wrap);
     });
 
-    const cleanW = (totalPartsLen * weightPerM / 1000).toFixed(2); // Вес всех заготовок
-    const shavingsW = (totalKerfLen * weightPerM / 1000).toFixed(2); // Вес пыли от пилы
-    const totalW = totalWeightInput.toFixed(2); // Общий вес закупки + склада
-    const scrapW = (totalWeightInput - cleanW - shavingsW).toFixed(2); // Вес твердых остатков
+    // --- РАСЧЕТ ИТОГОВ И КИМ ---
+    const totalInputLen = bins.reduce((s, b) => s + b.max, 0);
+    const kim = totalInputLen > 0 ? ((totalPartsLen / totalInputLen) * 100).toFixed(1) : 0;
+    const shavingsPercent = totalInputLen > 0 ? ((totalKerfLen / totalInputLen) * 100).toFixed(1) : 0;
+    const scrapPercent = (100 - kim - shavingsPercent).toFixed(1);
+
+    const cleanW = (totalPartsLen * weightPerM / 1000).toFixed(2);
+    const shavingsW = (totalKerfLen * weightPerM / 1000).toFixed(2);
+    const scrapW = (totalWeightInput - cleanW - shavingsW).toFixed(2);
+
+    const totalSec = totalCutsCount * cutTimePerOne;
+    const timeStr = `${Math.floor(totalSec/60)}м ${totalSec%60}с`;
+
+    // Считаем общее время, только если введено значение больше 0
+    const cutTimeInput = parseFloat(document.getElementById('cutTime').value);
+    let timeDisplayHtml = ''; // По умолчанию пусто
+
+    if (cutTimeInput > 0) {
+        const totalSec = totalCutsCount * cutTimeInput;
+        const minutes = Math.floor(totalSec / 60);
+        const seconds = totalSec % 60;
+        const timeStr = minutes > 0 ? `${minutes}м ${seconds}с` : `${seconds}с`;
+        
+        // Формируем строку для вывода
+        timeDisplayHtml = `<span style="font-size: 1rem; color: #2c3e50;">⏱ <b>${timeStr}</b> <span style="font-size:0.8rem; color:#888;">(${totalCutsCount} резов)</span></span><br>`;
+    } else {
+        // Если время не введено, можно просто показать количество резов
+        timeDisplayHtml = `<span style="font-size: 0.9rem; color: #777;">Всего резов: <b>${totalCutsCount} шт.</b></span><br>`;
+    }
+
     summary.style.display = 'block';
     summary.innerHTML = `
-        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:20px;">
+        <div style="display:grid; grid-template-columns: 1.2fr 1fr; gap:30px; align-items: center;">
             <div>
-                <h1 style="margin:0; font-size:1.3rem">${document.getElementById('projectName').value || 'Проект без названия'}</h1>
-                <p style="margin:5px 0 0 0; color:#444;">Профиль: <b>${document.getElementById('profileDesc').value || '—'}</b></p>
-                <p style="margin:5px 0 0 0;">Новых хлыстов: <b>${newCount} шт.</b> (${(newCount * stdStockLen / 1000).toFixed(2)} м)</p>
+                <h1 style="margin:0; font-size:1.4rem; color: #2c3e50;">${document.getElementById('projectName').value || 'Проект'}</h1>
+                <p style="margin:5px 0 0 0; color:#444; font-size:1.1rem;">Профиль: <b>${document.getElementById('profileDesc').value || '—'}</b></p>
+                <div style="margin-top:12px;">
+                    <label style="font-size:9px; font-weight:bold; color:#666; letter-spacing:1px;">КИМ (ЭФФЕКТИВНОСТЬ РАСКРОЯ):</label>
+                    <div style="width:100%; height:16px; background:#eee; border-radius:8px; overflow:hidden; display:flex; border:1px solid #ccc; margin-top:4px; box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);">
+                        <div style="width:${kim}%; background: linear-gradient(90deg, #28a745, #34ce57);" title="Полезное: ${kim}%"></div>
+                        <div style="width:${shavingsPercent}%; background:#333;" title="Стружка: ${shavingsPercent}%"></div>
+                        <div style="width:${scrapPercent}%; background:#ffc107;" title="Обрезки: ${scrapPercent}%"></div>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; font-size:11px; margin-top:5px; font-weight: 500;">
+                        <span>КИМ: <b style="color:#28a745">${kim}%</b></span>
+                        <span>Стружка: ${shavingsPercent}%</span>
+                        <span>Обрезки: <b style="color:#d39e00">${scrapPercent}%</b></span>
+                    </div>
+                </div>
             </div>
-            <div style="text-align:right; font-size: 0.95rem; line-height: 1.6;">
-                Общий вес материала: <b>${totalW} кг</b><br>
-                Чистый вес деталей: <b style="color:#2e7d32">${cleanW} кг</b><br>
-                Стружка: ${shavingsW} кг | Обрезки: ${scrapW} кг
+            <div style="text-align:right; font-size: 0.95rem; line-height: 1.7; border-left: 1px solid #eee; padding-left: 20px;">
+                Закупка: <b>${newCount} шт.</b> (${(newCount * stdStockLen / 1000).toFixed(2)} м)<br>
+                Общий вес материала: <b>${totalWeightInput.toFixed(2)} кг</b><br>
+                Чистый вес изделий: <b style="color:#28a745">${cleanW} кг</b><br>
+                ${timeDisplayHtml}<br>
+                <small style="color:#777">Стружка: ${shavingsW} кг | Обрезки: ${scrapW} кг</small>
             </div>
         </div>`;
 }
+
 
 function saveToFile() { save(); const blob = new Blob([localStorage.getItem(KEY)], {type:"application/json"}); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = (document.getElementById('projectName').value || "project") + ".json"; a.click(); }
 function loadFromFile(e) { const reader = new FileReader(); reader.onload = (ev) => { localStorage.setItem(KEY, ev.target.result); location.reload(); }; reader.readAsText(e.target.files[0]); }
