@@ -271,123 +271,295 @@ function calculate() {
     const stdStockLen = parseFloat(document.getElementById('stdStock').value);
     const weightPerM = parseFloat(document.getElementById('weight').value) || 0;
     const reportMode = document.getElementById('reportMode').value;
-    
-    // --- СБОР ДАННЫХ (оставляем как было) ---
+
+    // --- СБОР ДАННЫХ ---
     let availableStock = [];
     document.querySelectorAll('#stockContainer .stock-row').forEach(row => {
         const len = parseFloat(row.querySelector('.val-len').value);
         const qty = parseInt(row.querySelector('.val-qty').value);
         const extra = row.querySelector('.val-trim-extra').checked;
-        if (len > 0 && qty > 0) for(let i=0; i<qty; i++) availableStock.push({ max: len, current: [], isStock: true, forceDouble: extra });
+        if (len > 0 && qty > 0) {
+            for (let i = 0; i < qty; i++) {
+                availableStock.push({
+                    max: len,
+                    current: [],
+                    isStock: true,
+                    forceDouble: extra
+                });
+            }
+        }
     });
-    availableStock.sort((a, b) => a.max - b.max);
 
     let partsGrouped = [];
     document.querySelectorAll('#partsContainer .items-row').forEach(row => {
         const name = row.querySelector('.val-name').value || "Деталь";
         const len = parseFloat(row.querySelector('.val-len').value);
         const qty = parseInt(row.querySelector('.val-qty').value);
-        if (len > 0 && qty > 0) partsGrouped.push({ name, len, qty });
+        if (len > 0 && qty > 0) {
+            partsGrouped.push({ name, len, qty });
+        }
     });
 
     let partsFlat = [];
-    partsGrouped.forEach(p => { for(let i=0; i<p.qty; i++) partsFlat.push({ name: p.name, len: p.len }); });
+    partsGrouped.forEach(p => {
+        for (let i = 0; i < p.qty; i++) {
+            partsFlat.push({ name: p.name, len: p.len });
+        }
+    });
+
     partsFlat.sort((a, b) => b.len - a.len);
 
-    // --- ЭТАП 1: БАЗОВЫЙ РАСКЛАД (BEST FIT) ---
-    const usedBins = [];
+    // --- ЭТАП 1: ПРИОРИТЕТ ОСТАТКОВ ---
+    let fixedBins = [];
+    let dynamicBins = [];
+
+    // сначала пытаемся уложить детали в остатки
     partsFlat.forEach(p => {
-        let bestBinIdx = -1;
-        let minRem = Infinity;
-
-        for (let i = 0; i < usedBins.length; i++) {
-            let bin = usedBins[i];
-            let tMult = bin.isStock ? (bin.forceDouble ? 2 : 1) : 2;
-            let used = bin.current.reduce((s, x) => s + x.len, 0) + (bin.current.length * kerf) + (tMult * trim);
-            let rem = bin.max - (used + p.len);
-            if (rem >= 0 && rem < minRem) { minRem = rem; bestBinIdx = i; }
-        }
-
-        if (bestBinIdx !== -1) {
-            usedBins[bestBinIdx].current.push(p);
-        } else {
-            let bestStockIdx = -1;
-            let minStockRem = Infinity;
-            for (let i = 0; i < availableStock.length; i++) {
-                let sBin = availableStock[i];
-                let tMult = sBin.forceDouble ? 2 : 1;
-                let rem = sBin.max - (p.len + (tMult * trim));
-                if (rem >= 0 && rem < minStockRem) { minStockRem = rem; bestStockIdx = i; }
-            }
-            if (bestStockIdx !== -1) {
-                let bin = availableStock.splice(bestStockIdx, 1)[0];
+        for (let i = 0; i < availableStock.length; i++) {
+            let bin = availableStock[i];
+            if (canFit(bin, p, kerf, trim)) {
                 bin.current.push(p);
-                usedBins.push(bin);
-            } else {
-                if (p.len + (2 * trim) > stdStockLen) { alert("Деталь " + p.name + " не влезает!"); return; }
-                usedBins.push({ max: stdStockLen, current: [p], isStock: false, forceDouble: false });
+                return;
             }
         }
     });
 
-    // --- ЭТАП 2: ОПТИМИЗАЦИЯ (ПЕРЕБОР) ---
-    // Пробуем 1000 раз случайно поменять детали местами, чтобы уплотнить хлысты
-    for (let s = 0; s < 1000; s++) {
-        let idx1 = Math.floor(Math.random() * usedBins.length);
-        let idx2 = Math.floor(Math.random() * usedBins.length);
-        if (idx1 === idx2) continue;
+    // остатки, куда что-то уложилось
+    fixedBins = availableStock.filter(b => b.current.length > 0);
 
-        let b1 = usedBins[idx1];
-        let b2 = usedBins[idx2];
-        
-        let pIdx1 = Math.floor(Math.random() * b1.current.length);
-        let pIdx2 = Math.floor(Math.random() * b2.current.length);
+    // детали, которые не попали в остатки
+    let remainingParts = partsFlat.filter(p =>
+        !fixedBins.some(b => b.current.includes(p))
+    );
 
-        let p1 = b1.current[pIdx1];
-        let p2 = b2.current[pIdx2];
+    // --- ЭТАП 2: стартовое решение для динамических хлыстов ---
+    remainingParts.forEach(p =>
+        placePartBFD(p, dynamicBins, [], kerf, trim, stdStockLen)
+    );
 
-        // Проверяем, влезет ли замена в оба хлыста
-        if (checkFit([...b1.current.filter((_,i)=>i!==pIdx1), p2], b1, kerf, trim) && 
-            checkFit([...b2.current.filter((_,i)=>i!==pIdx2), p1], b2, kerf, trim)) {
-            
-            // Считаем "плотность" (сумма квадратов длин)
-            let qBefore = Math.pow(getLen(b1.current), 2) + Math.pow(getLen(b2.current), 2);
-            let qAfter = Math.pow(getLen([...b1.current.filter((_,i)=>i!==pIdx1), p2]), 2) + 
-                         Math.pow(getLen([...b2.current.filter((_,i)=>i!==pIdx2), p1]), 2);
+    // --- ЭТАП 3: LNS только для динамических хлыстов ---
+    dynamicBins = optimizeLNS(dynamicBins, kerf, trim, stdStockLen, 2000);
 
-            if (qAfter > qBefore) {
-                b1.current[pIdx1] = p2;
-                b2.current[pIdx2] = p1;
-            }
-        }
-    }
+    // --- ЭТАП 4: объединяем ---
+    let usedBins = [...fixedBins, ...dynamicBins];
 
-    // --- ЭТАП 3: СХЛОПЫВАНИЕ (УДАЛЕНИЕ ПУСТЫХ) ---
-    for (let i = usedBins.length - 1; i > 0; i--) {
-        for (let j = 0; j < i; j++) {
-            if (checkFit([...usedBins[j].current, ...usedBins[i].current], usedBins[j], kerf, trim)) {
-                usedBins[j].current.push(...usedBins[i].current);
-                usedBins.splice(i, 1);
-                break;
-            }
-        }
-    }
+    // --- ЭТАП 5: схлопывание ---
+    collapseBins(usedBins, kerf, trim);
 
+    // --- ОТРИСОВКА ---
     render(usedBins, kerf, trim, stdStockLen, weightPerM, partsGrouped, reportMode);
     updateJSONPanel();
 }
 
-// Вспомогательные функции (положи их ВНЕ calculate)
-function checkFit(parts, bin, kerf, trim) {
-    if (parts.length === 0) return true;
-    let tMult = bin.isStock ? (bin.forceDouble ? 2 : 1) : 2;
-    let total = parts.reduce((s, p) => s + p.len, 0) + (parts.length - 1) * kerf + (tMult * trim);
-    return total <= bin.max;
+
+function placePartBFD(part, bins, availableStock, kerf, trim, stdStockLen) {
+    let bestIdx = -1;
+    let bestRem = Infinity;
+
+    for (let i = 0; i < bins.length; i++) {
+        if (canFit(bins[i], part, kerf, trim)) {
+            let used = getUsedLength(bins[i], kerf, trim);
+            let rem = bins[i].max - (used + part.len + (bins[i].current.length > 0 ? kerf : 0));
+            if (rem < bestRem) {
+                bestRem = rem;
+                bestIdx = i;
+            }
+        }
+    }
+
+    if (bestIdx !== -1) {
+        bins[bestIdx].current.push(part);
+        return;
+    }
+
+    // ищем подходящий stock
+    let bestStockIdx = -1;
+    let bestStockRem = Infinity;
+
+    for (let i = 0; i < availableStock.length; i++) {
+        let s = availableStock[i];
+        let tMult = s.forceDouble ? 2 : 1;
+        let rem = s.max - (part.len + tMult * trim);
+        if (rem >= 0 && rem < bestStockRem) {
+            bestStockRem = rem;
+            bestStockIdx = i;
+        }
+    }
+
+    if (bestStockIdx !== -1) {
+        let bin = availableStock.splice(bestStockIdx, 1)[0];
+        bin.current.push(part);
+        bins.push(bin);
+        return;
+    }
+
+    // создаём новый нестандартный хлыст
+    bins.push({
+        max: stdStockLen,
+        current: [part],
+        isStock: false,
+        forceDouble: false
+    });
 }
 
-function getLen(parts) {
-    return parts.reduce((s, p) => s + p.len, 0);
+function getUsedLength(bin, kerf, trim) {
+    const sum = bin.current.reduce((s, x) => s + x.len, 0);
+    const kerfTotal = bin.current.length > 1 ? (bin.current.length - 1) * kerf : 0;
+    const tMult = bin.isStock ? (bin.forceDouble ? 2 : 1) : 2;
+    return sum + kerfTotal + tMult * trim;
 }
+
+function canFit(bin, part, kerf, trim) {
+    const used = getUsedLength(bin, kerf, trim);
+    const newKerf = bin.current.length > 0 ? kerf : 0;
+    return used + part.len + newKerf <= bin.max;
+}
+
+function checkFit(parts, bin, kerf, trim) {
+    let sum = parts.reduce((s, x) => s + x.len, 0);
+    let kerfTotal = parts.length > 1 ? (parts.length - 1) * kerf : 0;
+    const tMult = bin.isStock ? (bin.forceDouble ? 2 : 1) : 2;
+    return sum + kerfTotal + tMult * trim <= bin.max;
+}
+
+function scoreSolution(bins, kerf, trim) {
+    let score = 0;
+    for (let b of bins) {
+        const used = getUsedLength(b, kerf, trim);
+        const rem = b.max - used;
+        score -= rem * rem;
+    }
+    return score;
+}
+
+function generateNeighbor(bins, kerf, trim) {
+    let newBins = bins.map(b => ({
+        max: b.max,
+        isStock: b.isStock,
+        forceDouble: b.forceDouble,
+        current: [...b.current]
+    }));
+
+    if (newBins.length < 2) return newBins;
+
+    let i = Math.floor(Math.random() * newBins.length);
+    let j = Math.floor(Math.random() * newBins.length);
+    if (i === j) return newBins;
+
+    let b1 = newBins[i];
+    let b2 = newBins[j];
+
+    if (b1.current.length === 0 || b2.current.length === 0) return newBins;
+
+    let p1 = Math.floor(Math.random() * b1.current.length);
+    let p2 = Math.floor(Math.random() * b2.current.length);
+
+    let A = b1.current[p1];
+    let B = b2.current[p2];
+
+    let newB1 = [...b1.current];
+    let newB2 = [...b2.current];
+
+    newB1[p1] = B;
+    newB2[p2] = A;
+
+    if (checkFit(newB1, b1, kerf, trim) &&
+        checkFit(newB2, b2, kerf, trim)) {
+        b1.current = newB1;
+        b2.current = newB2;
+    }
+
+    return newBins;
+}
+
+
+function collapseBins(bins, kerf, trim) {
+    for (let i = bins.length - 1; i > 0; i--) {
+        for (let j = 0; j < i; j++) {
+            let merged = [...bins[j].current, ...bins[i].current];
+            if (checkFit(merged, bins[j], kerf, trim)) {
+                bins[j].current = merged;
+                bins.splice(i, 1);
+                break;
+            }
+        }
+    }
+}
+
+function optimizeLNS(bins, kerf, trim, stdStockLen, iterations = 2000) {
+
+    // --- 0. Если деталей мало — LNS не нужен ---
+    let totalParts = bins.reduce((s, b) => s + b.current.length, 0);
+    if (totalParts < 20) {
+        return bins; // просто возвращаем как есть
+    }
+
+    // --- 1. Глубокая копия ---
+    let best = JSON.parse(JSON.stringify(bins));
+    let bestScore = scoreSolution(best, kerf, trim);
+
+    for (let iter = 0; iter < iterations; iter++) {
+
+        // --- 2. Копируем текущее лучшее решение ---
+        let candidate = JSON.parse(JSON.stringify(best));
+
+        // --- 3. Собираем все детали ---
+        let allParts = [];
+        candidate.forEach(b => {
+            b.current = b.current.filter(p => p !== undefined && p !== null);
+            allParts.push(...b.current);
+        });
+
+        // --- 4. Разрушение: удаляем 10–20% деталей ---
+        let removeCount = Math.max(3, Math.floor(allParts.length * 0.15));
+        let removed = [];
+
+        let indices = new Set();
+        while (indices.size < removeCount) {
+            indices.add(Math.floor(Math.random() * allParts.length));
+        }
+
+        let newAllParts = [];
+        for (let i = 0; i < allParts.length; i++) {
+            if (indices.has(i)) removed.push(allParts[i]);
+            else newAllParts.push(allParts[i]);
+        }
+
+        allParts = newAllParts;
+
+        // --- 5. Очищаем хлысты ---
+        candidate.forEach(b => b.current = []);
+
+        // --- 6. Пересобираем оставшиеся детали ---
+        allParts.forEach(p => {
+            if (p) placePartBFD(p, candidate, [], kerf, trim, stdStockLen);
+        });
+
+        // --- 7. Добавляем удалённые детали ---
+        removed.forEach(p => {
+            if (p) placePartBFD(p, candidate, [], kerf, trim, stdStockLen);
+        });
+
+        // --- 8. Удаляем пустые хлысты ---
+        candidate = candidate.filter(b => b.current.length > 0);
+
+        // --- 9. Схлопывание ---
+        collapseBins(candidate, kerf, trim);
+
+        // --- 10. Оценка ---
+        let score = scoreSolution(candidate, kerf, trim);
+
+        // --- 11. SA-приём ---
+        let T = 1 - iter / iterations;
+        if (score > bestScore || Math.random() < Math.exp((score - bestScore) / T)) {
+            best = candidate;
+            bestScore = score;
+        }
+    }
+
+    return best;
+}
+
 
 function render(bins, kerf, trim, stdStockLen, weightPerM, partsGrouped, mode) {
     const results = document.getElementById('results');
@@ -445,6 +617,7 @@ function render(bins, kerf, trim, stdStockLen, weightPerM, partsGrouped, mode) {
 
     // --- Отрисовка хлыстов ---
     bins.forEach((bin, i) => {
+        bin.current.sort((a, b) => b.len - a.len);
         if (!bin.isStock) newCount++;
         const sumLen = bin.current.reduce((s, p) => s + p.len, 0);
         const kerfsInBin = bin.current.length > 1 ? (bin.current.length - 1) : 0;
@@ -557,9 +730,27 @@ function render(bins, kerf, trim, stdStockLen, weightPerM, partsGrouped, mode) {
 }
 
 
-function saveToFile() { save(); const blob = new Blob([localStorage.getItem(KEY)], {type:"application/json"}); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = (document.getElementById('projectName').value || "project") + ".json"; a.click(); }
-function loadFromFile(e) { const reader = new FileReader(); reader.onload = (ev) => { localStorage.setItem(KEY, ev.target.result); location.reload(); }; reader.readAsText(e.target.files[0]); }
-function clearAll() { if(confirm('Сбросить?')) { localStorage.removeItem(KEY); location.reload(); } }
+function saveToFile() { 
+    save(); 
+    const blob = new Blob([localStorage.getItem(KEY)], {type:"application/json"});
+    const a = document.createElement("a"); 
+    a.href = URL.createObjectURL(blob); 
+    a.download = (document.getElementById('projectName').value || "project") + ".json"; a.click(); 
+}
+
+function loadFromFile(e) { 
+    const reader = new FileReader(); 
+    reader.onload = (ev) => { localStorage.setItem(KEY, ev.target.result); 
+    location.reload(); }; 
+    reader.readAsText(e.target.files[0]); 
+}
+
+function clearAll() { 
+    if(confirm('Сбросить?')) { 
+        localStorage.removeItem(KEY); location.reload(); 
+    } 
+}
+
 window.onload = load;
 
 function toggleJSON() {
